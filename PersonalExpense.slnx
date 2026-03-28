@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="PersonalExpense.Api/PersonalExpense.Api.csproj" />
+  <Project Path="PersonalExpense.Domain/PersonalExpense.Domain.csproj" />
+  <Project Path="PersonalExpense.Infrastructure/PersonalExpense.Infrastructure.csproj" />
+</Solution>
