@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\PersonalExpense.Application\PersonalExpense.Application.csproj" />
     <ProjectReference Include="..\PersonalExpense.Domain\PersonalExpense.Domain.csproj" />
     <ProjectReference Include="..\PersonalExpense.Infrastructure\PersonalExpense.Infrastructure.csproj" />
   </ItemGroup>
