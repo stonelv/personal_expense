@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Identity;
+using PersonalExpense.Application;
+using PersonalExpense.Application.Exceptions;
 using PersonalExpense.Domain.Entities;
 using PersonalExpense.Infrastructure;
 using PersonalExpense.Infrastructure.Data;
@@ -13,8 +15,11 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddApplicationServices();
 
 var app = builder.Build();
+
+app.UseMiddleware<ExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
