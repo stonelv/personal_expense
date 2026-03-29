@@ -1,8 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PersonalExpense.Domain.Entities;
-using PersonalExpense.Infrastructure.Data;
+using PersonalExpense.Application.DTOs;
+using PersonalExpense.Application.Interfaces;
 using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
@@ -12,11 +11,11 @@ namespace PersonalExpense.API.Controllers;
 [Authorize]
 public class AccountsController : ControllerBase
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IAccountService _accountService;
 
-    public AccountsController(ApplicationDbContext context)
+    public AccountsController(IAccountService accountService)
     {
-        _context = context;
+        _accountService = accountService;
     }
 
     private Guid GetCurrentUserId()
@@ -25,86 +24,48 @@ public class AccountsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Account>>> GetAccounts()
+    public async Task<ActionResult<IEnumerable<AccountResponseDto>>> GetAccounts()
     {
         var userId = GetCurrentUserId();
-        return await _context.Accounts.Where(a => a.UserId == userId).ToListAsync();
+        var accounts = await _accountService.GetAccountsAsync(userId);
+        return Ok(accounts);
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<Account>> GetAccount(Guid id)
+    public async Task<ActionResult<AccountResponseDto>> GetAccount(Guid id)
     {
         var userId = GetCurrentUserId();
-        var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
-
+        var account = await _accountService.GetAccountByIdAsync(id, userId);
+        
         if (account == null)
         {
             return NotFound();
         }
 
-        return account;
+        return Ok(account);
     }
 
     [HttpPost]
-    public async Task<ActionResult<Account>> PostAccount(AccountDto accountDto)
+    public async Task<ActionResult<AccountResponseDto>> PostAccount(AccountCreateDto accountDto)
     {
         var userId = GetCurrentUserId();
-        var account = new Account
-        {
-            Id = Guid.NewGuid(),
-            Name = accountDto.Name,
-            Type = accountDto.Type,
-            Balance = accountDto.Balance,
-            Description = accountDto.Description,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow,
-            UserId = userId
-        };
-
-        _context.Accounts.Add(account);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetAccount), new { id = account.Id }, account);
+        var result = await _accountService.CreateAccountAsync(accountDto, userId);
+        return CreatedAtAction(nameof(GetAccount), new { id = result.Id }, result);
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> PutAccount(Guid id, AccountDto accountDto)
+    public async Task<ActionResult<AccountResponseDto>> PutAccount(Guid id, AccountUpdateDto accountDto)
     {
         var userId = GetCurrentUserId();
-        var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
-
-        if (account == null)
-        {
-            return NotFound();
-        }
-
-        account.Name = accountDto.Name;
-        account.Type = accountDto.Type;
-        account.Balance = accountDto.Balance;
-        account.Description = accountDto.Description;
-        account.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+        var result = await _accountService.UpdateAccountAsync(id, accountDto, userId);
+        return Ok(result);
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteAccount(Guid id)
     {
         var userId = GetCurrentUserId();
-        var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId);
-
-        if (account == null)
-        {
-            return NotFound();
-        }
-
-        _context.Accounts.Remove(account);
-        await _context.SaveChangesAsync();
-
+        await _accountService.DeleteAccountAsync(id, userId);
         return NoContent();
     }
 }
-
-public record AccountDto(string Name, AccountType Type, decimal Balance, string? Description);

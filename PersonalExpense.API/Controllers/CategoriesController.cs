@@ -1,8 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using PersonalExpense.Domain.Entities;
-using PersonalExpense.Infrastructure.Data;
+using PersonalExpense.Application.DTOs;
+using PersonalExpense.Application.Interfaces;
 using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
@@ -12,11 +11,11 @@ namespace PersonalExpense.API.Controllers;
 [Authorize]
 public class CategoriesController : ControllerBase
 {
-    private readonly ApplicationDbContext _context;
+    private readonly ICategoryService _categoryService;
 
-    public CategoriesController(ApplicationDbContext context)
+    public CategoriesController(ICategoryService categoryService)
     {
-        _context = context;
+        _categoryService = categoryService;
     }
 
     private Guid GetCurrentUserId()
@@ -25,86 +24,48 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Category>>> GetCategories()
+    public async Task<ActionResult<IEnumerable<CategoryResponseDto>>> GetCategories()
     {
         var userId = GetCurrentUserId();
-        return await _context.Categories.Where(c => c.UserId == userId).ToListAsync();
+        var categories = await _categoryService.GetCategoriesAsync(userId);
+        return Ok(categories);
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<Category>> GetCategory(Guid id)
+    public async Task<ActionResult<CategoryResponseDto>> GetCategory(Guid id)
     {
         var userId = GetCurrentUserId();
-        var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
-
+        var category = await _categoryService.GetCategoryByIdAsync(id, userId);
+        
         if (category == null)
         {
             return NotFound();
         }
 
-        return category;
+        return Ok(category);
     }
 
     [HttpPost]
-    public async Task<ActionResult<Category>> PostCategory(CategoryDto categoryDto)
+    public async Task<ActionResult<CategoryResponseDto>> PostCategory(CategoryCreateDto categoryDto)
     {
         var userId = GetCurrentUserId();
-        var category = new Category
-        {
-            Id = Guid.NewGuid(),
-            Name = categoryDto.Name,
-            Type = categoryDto.Type,
-            Icon = categoryDto.Icon,
-            Description = categoryDto.Description,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow,
-            UserId = userId
-        };
-
-        _context.Categories.Add(category);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetCategory), new { id = category.Id }, category);
+        var result = await _categoryService.CreateCategoryAsync(categoryDto, userId);
+        return CreatedAtAction(nameof(GetCategory), new { id = result.Id }, result);
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> PutCategory(Guid id, CategoryDto categoryDto)
+    public async Task<ActionResult<CategoryResponseDto>> PutCategory(Guid id, CategoryUpdateDto categoryDto)
     {
         var userId = GetCurrentUserId();
-        var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
-
-        if (category == null)
-        {
-            return NotFound();
-        }
-
-        category.Name = categoryDto.Name;
-        category.Type = categoryDto.Type;
-        category.Icon = categoryDto.Icon;
-        category.Description = categoryDto.Description;
-        category.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+        var result = await _categoryService.UpdateCategoryAsync(id, categoryDto, userId);
+        return Ok(result);
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteCategory(Guid id)
     {
         var userId = GetCurrentUserId();
-        var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
-
-        if (category == null)
-        {
-            return NotFound();
-        }
-
-        _context.Categories.Remove(category);
-        await _context.SaveChangesAsync();
-
+        await _categoryService.DeleteCategoryAsync(id, userId);
         return NoContent();
     }
 }
-
-public record CategoryDto(string Name, CategoryType Type, string? Icon, string? Description);
