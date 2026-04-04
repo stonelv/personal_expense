@@ -1,8 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using PersonalExpense.Application.DTOs;
+using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
-using PersonalExpense.Infrastructure.Data;
+using System;
 using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
@@ -12,11 +13,11 @@ namespace PersonalExpense.API.Controllers;
 [Authorize]
 public class TransactionsController : ControllerBase
 {
-    private readonly ApplicationDbContext _context;
+    private readonly ITransactionService _transactionService;
 
-    public TransactionsController(ApplicationDbContext context)
+    public TransactionsController(ITransactionService transactionService)
     {
-        _context = context;
+        _transactionService = transactionService;
     }
 
     private Guid GetCurrentUserId()
@@ -25,258 +26,139 @@ public class TransactionsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Transaction>>> GetTransactions(
+    public async Task<ActionResult<TransactionListResponseDto>> GetTransactions(
         [FromQuery] int? year, 
         [FromQuery] int? month,
-        [FromQuery] TransactionType? type)
+        [FromQuery] TransactionType? type,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
     {
         var userId = GetCurrentUserId();
-        var query = _context.Transactions
-            .Include(t => t.Account)
-            .Include(t => t.Category)
-            .Where(t => t.UserId == userId);
+        
+        var transactions = await _transactionService.GetTransactionsAsync(userId, year, month, type, page, pageSize);
+        var totalCount = await _transactionService.GetTotalCountAsync(userId, year, month, type);
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
-        if (year.HasValue)
-        {
-            query = query.Where(t => t.TransactionDate.Year == year.Value);
-        }
+        var items = transactions.Select(t => new TransactionResponseDto(
+            Id: t.Id,
+            Type: t.Type,
+            Amount: t.Amount,
+            TransactionDate: t.TransactionDate,
+            Description: t.Description,
+            AttachmentUrl: t.AttachmentUrl,
+            CreatedAt: t.CreatedAt,
+            UpdatedAt: t.UpdatedAt,
+            AccountId: t.AccountId,
+            AccountName: t.Account.Name,
+            CategoryId: t.CategoryId,
+            CategoryName: t.Category?.Name,
+            TransferToAccountId: t.TransferToAccountId,
+            TransferToAccountName: t.TransferToAccount?.Name
+        ));
 
-        if (month.HasValue)
-        {
-            query = query.Where(t => t.TransactionDate.Month == month.Value);
-        }
+        var response = new TransactionListResponseDto(
+            Items: items,
+            TotalCount: totalCount,
+            Page: page,
+            PageSize: pageSize,
+            TotalPages: totalPages
+        );
 
-        if (type.HasValue)
-        {
-            query = query.Where(t => t.Type == type.Value);
-        }
-
-        return await query.OrderByDescending(t => t.TransactionDate).ToListAsync();
+        return Ok(response);
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<Transaction>> GetTransaction(Guid id)
+    public async Task<ActionResult<TransactionResponseDto>> GetTransaction(Guid id)
     {
         var userId = GetCurrentUserId();
-        var transaction = await _context.Transactions
-            .Include(t => t.Account)
-            .Include(t => t.Category)
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+        var transaction = await _transactionService.GetTransactionByIdAsync(id, userId);
 
-        if (transaction == null)
-        {
-            return NotFound();
-        }
+        var response = new TransactionResponseDto(
+            Id: transaction.Id,
+            Type: transaction.Type,
+            Amount: transaction.Amount,
+            TransactionDate: transaction.TransactionDate,
+            Description: transaction.Description,
+            AttachmentUrl: transaction.AttachmentUrl,
+            CreatedAt: transaction.CreatedAt,
+            UpdatedAt: transaction.UpdatedAt,
+            AccountId: transaction.AccountId,
+            AccountName: transaction.Account.Name,
+            CategoryId: transaction.CategoryId,
+            CategoryName: transaction.Category?.Name,
+            TransferToAccountId: transaction.TransferToAccountId,
+            TransferToAccountName: transaction.TransferToAccount?.Name
+        );
 
-        return transaction;
+        return Ok(response);
     }
 
     [HttpPost]
-    public async Task<ActionResult<Transaction>> PostTransaction(TransactionDto transactionDto)
+    public async Task<ActionResult<TransactionResponseDto>> PostTransaction(TransactionRequestDto transactionDto)
     {
         var userId = GetCurrentUserId();
-        
-        using var transaction = await _context.Database.BeginTransactionAsync();
-        try
+        var transaction = new Transaction
         {
-            var newTransaction = new Transaction
-            {
-                Id = Guid.NewGuid(),
-                Type = transactionDto.Type,
-                Amount = transactionDto.Amount,
-                TransactionDate = transactionDto.TransactionDate,
-                Description = transactionDto.Description,
-                AttachmentUrl = transactionDto.AttachmentUrl,
-                CreatedAt = DateTime.UtcNow,
-                UserId = userId,
-                AccountId = transactionDto.AccountId,
-                CategoryId = transactionDto.CategoryId,
-                TransferToAccountId = transactionDto.TransferToAccountId
-            };
+            Type = transactionDto.Type,
+            Amount = transactionDto.Amount,
+            TransactionDate = transactionDto.TransactionDate,
+            Description = transactionDto.Description,
+            AttachmentUrl = transactionDto.AttachmentUrl,
+            AccountId = transactionDto.AccountId,
+            CategoryId = transactionDto.CategoryId,
+            TransferToAccountId = transactionDto.TransferToAccountId
+        };
 
-            _context.Transactions.Add(newTransaction);
+        var createdTransaction = await _transactionService.CreateTransactionAsync(transaction, userId);
 
-            var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == transactionDto.AccountId && a.UserId == userId);
-            if (account == null)
-            {
-                return BadRequest("Account not found");
-            }
+        var response = new TransactionResponseDto(
+            Id: createdTransaction.Id,
+            Type: createdTransaction.Type,
+            Amount: createdTransaction.Amount,
+            TransactionDate: createdTransaction.TransactionDate,
+            Description: createdTransaction.Description,
+            AttachmentUrl: createdTransaction.AttachmentUrl,
+            CreatedAt: createdTransaction.CreatedAt,
+            UpdatedAt: createdTransaction.UpdatedAt,
+            AccountId: createdTransaction.AccountId,
+            AccountName: createdTransaction.Account.Name,
+            CategoryId: createdTransaction.CategoryId,
+            CategoryName: createdTransaction.Category?.Name,
+            TransferToAccountId: createdTransaction.TransferToAccountId,
+            TransferToAccountName: createdTransaction.TransferToAccount?.Name
+        );
 
-            if (transactionDto.Type == TransactionType.Income)
-            {
-                account.Balance += transactionDto.Amount;
-            }
-            else if (transactionDto.Type == TransactionType.Expense)
-            {
-                account.Balance -= transactionDto.Amount;
-            }
-            else if (transactionDto.Type == TransactionType.Transfer && transactionDto.TransferToAccountId.HasValue)
-            {
-                var toAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == transactionDto.TransferToAccountId.Value && a.UserId == userId);
-                if (toAccount == null)
-                {
-                    return BadRequest("Transfer to account not found");
-                }
-                account.Balance -= transactionDto.Amount;
-                toAccount.Balance += transactionDto.Amount;
-            }
-
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            return CreatedAtAction(nameof(GetTransaction), new { id = newTransaction.Id }, newTransaction);
-        }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        return CreatedAtAction(nameof(GetTransaction), new { id = createdTransaction.Id }, response);
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> PutTransaction(Guid id, TransactionDto transactionDto)
+    public async Task<IActionResult> PutTransaction(Guid id, TransactionRequestDto transactionDto)
     {
         var userId = GetCurrentUserId();
-        
-        using var transaction = await _context.Database.BeginTransactionAsync();
-        try
+        var transaction = new Transaction
         {
-            var existingTransaction = await _context.Transactions
-                .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+            Type = transactionDto.Type,
+            Amount = transactionDto.Amount,
+            TransactionDate = transactionDto.TransactionDate,
+            Description = transactionDto.Description,
+            AttachmentUrl = transactionDto.AttachmentUrl,
+            AccountId = transactionDto.AccountId,
+            CategoryId = transactionDto.CategoryId,
+            TransferToAccountId = transactionDto.TransferToAccountId
+        };
 
-            if (existingTransaction == null)
-            {
-                return NotFound();
-            }
+        await _transactionService.UpdateTransactionAsync(id, transaction, userId);
 
-            var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == existingTransaction.AccountId && a.UserId == userId);
-            if (account != null)
-            {
-                if (existingTransaction.Type == TransactionType.Income)
-                {
-                    account.Balance -= existingTransaction.Amount;
-                }
-                else if (existingTransaction.Type == TransactionType.Expense)
-                {
-                    account.Balance += existingTransaction.Amount;
-                }
-                else if (existingTransaction.Type == TransactionType.Transfer && existingTransaction.TransferToAccountId.HasValue)
-                {
-                    var toAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == existingTransaction.TransferToAccountId.Value && a.UserId == userId);
-                    if (toAccount != null)
-                    {
-                        account.Balance += existingTransaction.Amount;
-                        toAccount.Balance -= existingTransaction.Amount;
-                    }
-                }
-            }
-
-            existingTransaction.Type = transactionDto.Type;
-            existingTransaction.Amount = transactionDto.Amount;
-            existingTransaction.TransactionDate = transactionDto.TransactionDate;
-            existingTransaction.Description = transactionDto.Description;
-            existingTransaction.AttachmentUrl = transactionDto.AttachmentUrl;
-            existingTransaction.UpdatedAt = DateTime.UtcNow;
-            existingTransaction.AccountId = transactionDto.AccountId;
-            existingTransaction.CategoryId = transactionDto.CategoryId;
-            existingTransaction.TransferToAccountId = transactionDto.TransferToAccountId;
-
-            var newAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == transactionDto.AccountId && a.UserId == userId);
-            if (newAccount == null)
-            {
-                return BadRequest("Account not found");
-            }
-
-            if (transactionDto.Type == TransactionType.Income)
-            {
-                newAccount.Balance += transactionDto.Amount;
-            }
-            else if (transactionDto.Type == TransactionType.Expense)
-            {
-                newAccount.Balance -= transactionDto.Amount;
-            }
-            else if (transactionDto.Type == TransactionType.Transfer && transactionDto.TransferToAccountId.HasValue)
-            {
-                var toAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == transactionDto.TransferToAccountId.Value && a.UserId == userId);
-                if (toAccount == null)
-                {
-                    return BadRequest("Transfer to account not found");
-                }
-                newAccount.Balance -= transactionDto.Amount;
-                toAccount.Balance += transactionDto.Amount;
-            }
-
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            return NoContent();
-        }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        return NoContent();
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTransaction(Guid id)
     {
         var userId = GetCurrentUserId();
-        
-        using var transaction = await _context.Database.BeginTransactionAsync();
-        try
-        {
-            var existingTransaction = await _context.Transactions
-                .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+        await _transactionService.DeleteTransactionAsync(id, userId);
 
-            if (existingTransaction == null)
-            {
-                return NotFound();
-            }
-
-            var account = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == existingTransaction.AccountId && a.UserId == userId);
-            if (account != null)
-            {
-                if (existingTransaction.Type == TransactionType.Income)
-                {
-                    account.Balance -= existingTransaction.Amount;
-                }
-                else if (existingTransaction.Type == TransactionType.Expense)
-                {
-                    account.Balance += existingTransaction.Amount;
-                }
-                else if (existingTransaction.Type == TransactionType.Transfer && existingTransaction.TransferToAccountId.HasValue)
-                {
-                    var toAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.Id == existingTransaction.TransferToAccountId.Value && a.UserId == userId);
-                    if (toAccount != null)
-                    {
-                        account.Balance += existingTransaction.Amount;
-                        toAccount.Balance -= existingTransaction.Amount;
-                    }
-                }
-            }
-
-            _context.Transactions.Remove(existingTransaction);
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            return NoContent();
-        }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        return NoContent();
     }
 }
 
-public record TransactionDto(
-    TransactionType Type,
-    decimal Amount,
-    DateTime TransactionDate,
-    string? Description,
-    string? AttachmentUrl,
-    Guid AccountId,
-    Guid? CategoryId,
-    Guid? TransferToAccountId
-);
