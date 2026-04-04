@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Identity;
+using PersonalExpense.Api.Middleware;
+using PersonalExpense.Application.DependencyInjection;
 using PersonalExpense.Domain.Entities;
 using PersonalExpense.Infrastructure;
 using PersonalExpense.Infrastructure.Data;
@@ -13,6 +15,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddApplicationServices();
 
 var app = builder.Build();
 
@@ -23,6 +26,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
