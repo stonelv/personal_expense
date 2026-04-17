@@ -23,7 +23,8 @@ public class TransactionServiceTests
             .Options;
 
         _context = new ApplicationDbContext(options);
-        _service = new TransactionService(_context);
+        var budgetService = new BudgetService(_context);
+        _service = new TransactionService(_context, budgetService);
     }
 
     private async Task<Account> CreateTestAccountAsync(string name, decimal initialBalance)
@@ -70,8 +71,9 @@ public class TransactionServiceTests
 
         // Assert
         result.Should().NotBeNull();
-        result.Type.Should().Be(TransactionType.Income);
-        result.Amount.Should().Be(incomeAmount);
+        result.Transaction.Should().NotBeNull();
+        result.Transaction.Type.Should().Be(TransactionType.Income);
+        result.Transaction.Amount.Should().Be(incomeAmount);
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
         updatedAccount.Should().NotBeNull();
@@ -98,7 +100,7 @@ public class TransactionServiceTests
             TransferToAccountId: null
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         var updateDto = new TransactionUpdateDto(
             Type: TransactionType.Income,
@@ -112,11 +114,11 @@ public class TransactionServiceTests
         );
 
         // Act
-        var result = await _service.UpdateTransactionAsync(createdTransaction.Id, updateDto, _userId);
+        var result = await _service.UpdateTransactionAsync(createdResult.Transaction.Id, updateDto, _userId);
 
         // Assert
         result.Should().NotBeNull();
-        result.Amount.Should().Be(newIncome);
+        result.Transaction.Amount.Should().Be(newIncome);
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
         updatedAccount.Should().NotBeNull();
@@ -142,13 +144,13 @@ public class TransactionServiceTests
             TransferToAccountId: null
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         // Act
-        await _service.DeleteTransactionAsync(createdTransaction.Id, _userId);
+        await _service.DeleteTransactionAsync(createdResult.Transaction.Id, _userId);
 
         // Assert
-        var deletedTransaction = await _context.Transactions.FindAsync(createdTransaction.Id);
+        var deletedTransaction = await _context.Transactions.FindAsync(createdResult.Transaction.Id);
         deletedTransaction.Should().BeNull();
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
@@ -184,8 +186,8 @@ public class TransactionServiceTests
 
         // Assert
         result.Should().NotBeNull();
-        result.Type.Should().Be(TransactionType.Expense);
-        result.Amount.Should().Be(expenseAmount);
+        result.Transaction.Type.Should().Be(TransactionType.Expense);
+        result.Transaction.Amount.Should().Be(expenseAmount);
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
         updatedAccount.Should().NotBeNull();
@@ -211,10 +213,10 @@ public class TransactionServiceTests
             TransferToAccountId: null
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         // Act
-        await _service.DeleteTransactionAsync(createdTransaction.Id, _userId);
+        await _service.DeleteTransactionAsync(createdResult.Transaction.Id, _userId);
 
         // Assert
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
@@ -252,8 +254,8 @@ public class TransactionServiceTests
 
         // Assert
         result.Should().NotBeNull();
-        result.Type.Should().Be(TransactionType.Transfer);
-        result.Amount.Should().Be(transferAmount);
+        result.Transaction.Type.Should().Be(TransactionType.Transfer);
+        result.Transaction.Amount.Should().Be(transferAmount);
 
         var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
         var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
@@ -285,10 +287,10 @@ public class TransactionServiceTests
             TransferToAccountId: toAccount.Id
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         // Act
-        await _service.DeleteTransactionAsync(createdTransaction.Id, _userId);
+        await _service.DeleteTransactionAsync(createdResult.Transaction.Id, _userId);
 
         // Assert
         var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
@@ -381,7 +383,7 @@ public class TransactionServiceTests
             TransferToAccountId: null
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         var invalidAccountId = Guid.NewGuid();
         var updateDto = new TransactionUpdateDto(
@@ -397,11 +399,11 @@ public class TransactionServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<BadRequestException>(
-            () => _service.UpdateTransactionAsync(createdTransaction.Id, updateDto, _userId));
+            () => _service.UpdateTransactionAsync(createdResult.Transaction.Id, updateDto, _userId));
 
         exception.Message.Should().Contain("Account not found");
 
-        var transaction = await _context.Transactions.FindAsync(createdTransaction.Id);
+        var transaction = await _context.Transactions.FindAsync(createdResult.Transaction.Id);
         transaction.Should().NotBeNull();
         transaction!.Amount.Should().Be(500);
 
@@ -466,7 +468,7 @@ public class TransactionServiceTests
 
         // Assert
         result.Should().NotBeNull();
-        result.Amount.Should().Be(0);
+        result.Transaction.Amount.Should().Be(0);
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
         updatedAccount.Should().NotBeNull();
@@ -492,7 +494,7 @@ public class TransactionServiceTests
             TransferToAccountId: null
         );
 
-        var createdTransaction = await _service.CreateTransactionAsync(createDto, _userId);
+        var createdResult = await _service.CreateTransactionAsync(createDto, _userId);
 
         var updateDto = new TransactionUpdateDto(
             Type: TransactionType.Expense,
@@ -506,11 +508,11 @@ public class TransactionServiceTests
         );
 
         // Act
-        var result = await _service.UpdateTransactionAsync(createdTransaction.Id, updateDto, _userId);
+        var result = await _service.UpdateTransactionAsync(createdResult.Transaction.Id, updateDto, _userId);
 
         // Assert
         result.Should().NotBeNull();
-        result.Type.Should().Be(TransactionType.Expense);
+        result.Transaction.Type.Should().Be(TransactionType.Expense);
 
         var updatedAccount = await _context.Accounts.FindAsync(account.Id);
         updatedAccount.Should().NotBeNull();

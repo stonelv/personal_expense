@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
+using PersonalExpense.Application.Helpers;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
 using PersonalExpense.Infrastructure.Data;
@@ -60,8 +61,8 @@ public class BudgetService : IBudgetService
             .Where(b => b.UserId == userId && b.Year == year && b.Month == month)
             .ToListAsync();
 
-        var monthStart = ConvertToUtc(new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified), timeZone);
-        var monthEnd = ConvertToUtc(new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59, DateTimeKind.Unspecified), timeZone);
+        var monthStart = TimeZoneHelper.GetMonthStartInUtc(year, month, timeZone);
+        var monthEnd = TimeZoneHelper.GetMonthEndInUtc(year, month, timeZone);
 
         var transactions = await _context.Transactions
             .Where(t => t.UserId == userId 
@@ -189,7 +190,7 @@ public class BudgetService : IBudgetService
         }
 
         var tz = timeZone ?? TimeZoneInfo.Utc;
-        var localDate = ConvertFromUtc(transactionDate, tz);
+        var localDate = TimeZoneHelper.ConvertFromUtc(transactionDate, tz);
         var year = localDate.Year;
         var month = localDate.Month;
 
@@ -229,25 +230,7 @@ public class BudgetService : IBudgetService
         };
     }
 
-    private static DateTime ConvertToUtc(DateTime dateTime, TimeZoneInfo timeZone)
-    {
-        if (dateTime.Kind == DateTimeKind.Utc)
-        {
-            return dateTime;
-        }
-        
-        var unspecified = DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified);
-        return TimeZoneInfo.ConvertTimeToUtc(unspecified, timeZone);
-    }
 
-    private static DateTime ConvertFromUtc(DateTime dateTime, TimeZoneInfo timeZone)
-    {
-        if (dateTime.Kind != DateTimeKind.Utc)
-        {
-            dateTime = DateTime.SpecifyKind(dateTime, DateTimeKind.Utc);
-        }
-        return TimeZoneInfo.ConvertTimeFromUtc(dateTime, timeZone);
-    }
 
     public async Task<BudgetDto> CreateBudgetAsync(BudgetCreateDto dto, Guid userId)
     {

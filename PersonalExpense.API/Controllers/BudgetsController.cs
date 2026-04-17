@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
+using PersonalExpense.Application.Helpers;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
 using System.Security.Claims;
@@ -32,18 +33,7 @@ public class BudgetsController : ControllerBase
             return null;
         }
 
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return null;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return null;
-        }
+        return TimeZoneHelper.FindTimeZoneById(timeZoneId);
     }
 
     [HttpGet]
