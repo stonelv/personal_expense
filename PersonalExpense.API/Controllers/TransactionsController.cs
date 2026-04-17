@@ -25,6 +25,27 @@ public class TransactionsController : ControllerBase
         return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
     }
 
+    private static TimeZoneInfo? GetTimeZoneFromRequest(string? timeZoneId)
+    {
+        if (string.IsNullOrEmpty(timeZoneId))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return null;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return null;
+        }
+    }
+
     [HttpGet]
     public async Task<ActionResult<PagedResult<TransactionDto>>> GetTransactions(
         [FromQuery] int? year, 
@@ -77,6 +98,17 @@ public class TransactionsController : ControllerBase
         return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
     }
 
+    [HttpPost("with-budget-check")]
+    public async Task<ActionResult<TransactionBudgetAlertDto>> PostTransactionWithBudgetCheck(
+        TransactionCreateDto dto,
+        [FromQuery] string? timeZoneId = null)
+    {
+        var userId = GetCurrentUserId();
+        var timeZone = GetTimeZoneFromRequest(timeZoneId);
+        var result = await _transactionService.CreateTransactionWithBudgetCheckAsync(dto, userId, timeZone);
+        return CreatedAtAction(nameof(GetTransaction), new { id = result.Transaction.Id }, result);
+    }
+
     [HttpPut("{id}")]
     public async Task<IActionResult> PutTransaction(Guid id, TransactionUpdateDto dto)
     {
@@ -85,11 +117,34 @@ public class TransactionsController : ControllerBase
         return NoContent();
     }
 
+    [HttpPut("{id}/with-budget-check")]
+    public async Task<ActionResult<TransactionBudgetAlertDto>> PutTransactionWithBudgetCheck(
+        Guid id, 
+        TransactionUpdateDto dto,
+        [FromQuery] string? timeZoneId = null)
+    {
+        var userId = GetCurrentUserId();
+        var timeZone = GetTimeZoneFromRequest(timeZoneId);
+        var result = await _transactionService.UpdateTransactionWithBudgetCheckAsync(id, dto, userId, timeZone);
+        return Ok(result);
+    }
+
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTransaction(Guid id)
     {
         var userId = GetCurrentUserId();
         await _transactionService.DeleteTransactionAsync(id, userId);
         return NoContent();
+    }
+
+    [HttpDelete("{id}/with-budget-check")]
+    public async Task<ActionResult<BudgetAlertDto?>> DeleteTransactionWithBudgetCheck(
+        Guid id,
+        [FromQuery] string? timeZoneId = null)
+    {
+        var userId = GetCurrentUserId();
+        var timeZone = GetTimeZoneFromRequest(timeZoneId);
+        var result = await _transactionService.DeleteTransactionWithBudgetCheckAsync(id, userId, timeZone);
+        return Ok(result);
     }
 }

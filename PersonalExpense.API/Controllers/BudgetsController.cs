@@ -25,6 +25,27 @@ public class BudgetsController : ControllerBase
         return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
     }
 
+    private static TimeZoneInfo? GetTimeZoneFromRequest(string? timeZoneId)
+    {
+        if (string.IsNullOrEmpty(timeZoneId))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return null;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return null;
+        }
+    }
+
     [HttpGet]
     public async Task<ActionResult<List<BudgetDto>>> GetBudgets(
         [FromQuery] int? year, 
@@ -52,11 +73,45 @@ public class BudgetsController : ControllerBase
     [HttpGet("status")]
     public async Task<ActionResult<BudgetStatusDto>> GetBudgetStatus(
         [FromQuery] int year, 
-        [FromQuery] int month)
+        [FromQuery] int month,
+        [FromQuery] string? timeZoneId = null)
     {
         var userId = GetCurrentUserId();
-        var status = await _budgetService.GetBudgetStatusAsync(userId, year, month);
+        var timeZone = GetTimeZoneFromRequest(timeZoneId);
+        
+        BudgetStatusDto status;
+        if (timeZone != null)
+        {
+            status = await _budgetService.GetBudgetStatusAsync(userId, year, month, timeZone);
+        }
+        else
+        {
+            status = await _budgetService.GetBudgetStatusAsync(userId, year, month);
+        }
+        
         return Ok(status);
+    }
+
+    [HttpGet("alerts")]
+    public async Task<ActionResult<BudgetAlertDto>> GetBudgetAlerts(
+        [FromQuery] int year, 
+        [FromQuery] int month,
+        [FromQuery] string? timeZoneId = null)
+    {
+        var userId = GetCurrentUserId();
+        var timeZone = GetTimeZoneFromRequest(timeZoneId);
+        
+        BudgetAlertDto alerts;
+        if (timeZone != null)
+        {
+            alerts = await _budgetService.GetBudgetAlertsAsync(userId, year, month, timeZone);
+        }
+        else
+        {
+            alerts = await _budgetService.GetBudgetAlertsAsync(userId, year, month);
+        }
+        
+        return Ok(alerts);
     }
 
     [HttpPost]

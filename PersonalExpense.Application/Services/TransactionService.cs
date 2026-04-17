@@ -10,10 +10,18 @@ namespace PersonalExpense.Application.Services;
 public class TransactionService : ITransactionService
 {
     private readonly ApplicationDbContext _context;
+    private readonly IBudgetService _budgetService;
+
+    public TransactionService(ApplicationDbContext context, IBudgetService budgetService)
+    {
+        _context = context;
+        _budgetService = budgetService;
+    }
 
     public TransactionService(ApplicationDbContext context)
     {
         _context = context;
+        _budgetService = new BudgetService(context);
     }
 
     public async Task<PagedResult<TransactionDto>> GetTransactionsAsync(Guid userId, TransactionFilterParams filter)
@@ -250,6 +258,67 @@ public class TransactionService : ITransactionService
             await transaction.RollbackAsync();
             throw;
         }
+    }
+
+    public async Task<TransactionBudgetAlertDto> CreateTransactionWithBudgetCheckAsync(
+        TransactionCreateDto dto, 
+        Guid userId, 
+        TimeZoneInfo? timeZone = null)
+    {
+        var transactionDto = await CreateTransactionAsync(dto, userId);
+        
+        var budgetAlert = await _budgetService.CheckBudgetAlertAfterTransactionAsync(
+            userId, 
+            dto.Type, 
+            dto.TransactionDate, 
+            timeZone);
+
+        return new TransactionBudgetAlertDto(transactionDto, budgetAlert);
+    }
+
+    public async Task<TransactionBudgetAlertDto> UpdateTransactionWithBudgetCheckAsync(
+        Guid id, 
+        TransactionUpdateDto dto, 
+        Guid userId, 
+        TimeZoneInfo? timeZone = null)
+    {
+        var transactionDto = await UpdateTransactionAsync(id, dto, userId);
+        
+        var budgetAlert = await _budgetService.CheckBudgetAlertAfterTransactionAsync(
+            userId, 
+            dto.Type, 
+            dto.TransactionDate, 
+            timeZone);
+
+        return new TransactionBudgetAlertDto(transactionDto, budgetAlert);
+    }
+
+    public async Task<BudgetAlertDto?> DeleteTransactionWithBudgetCheckAsync(
+        Guid id, 
+        Guid userId, 
+        TimeZoneInfo? timeZone = null)
+    {
+        var existingTransaction = await _context.Transactions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+
+        if (existingTransaction == null)
+        {
+            throw new NotFoundException(nameof(Transaction), id);
+        }
+
+        var transactionType = existingTransaction.Type;
+        var transactionDate = existingTransaction.TransactionDate;
+
+        await DeleteTransactionAsync(id, userId);
+        
+        var budgetAlert = await _budgetService.CheckBudgetAlertAfterTransactionAsync(
+            userId, 
+            transactionType, 
+            transactionDate, 
+            timeZone);
+
+        return budgetAlert;
     }
 
     private async Task ApplyTransactionEffectsAsync(Transaction transaction, Account account, Guid userId, bool isCreate)
