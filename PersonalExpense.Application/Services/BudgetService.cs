@@ -9,6 +9,9 @@ namespace PersonalExpense.Application.Services;
 
 public class BudgetService : IBudgetService
 {
+    private const decimal WarningThreshold = 0.80m;
+    private const decimal CriticalThreshold = 1.00m;
+
     private readonly ApplicationDbContext _context;
 
     public BudgetService(ApplicationDbContext context)
@@ -47,40 +50,71 @@ public class BudgetService : IBudgetService
 
     public async Task<BudgetStatusDto> GetBudgetStatusAsync(Guid userId, int year, int month)
     {
+        return await GetBudgetStatusAsync(userId, year, month, TimeZoneInfo.Utc);
+    }
+
+    public async Task<BudgetStatusDto> GetBudgetStatusAsync(Guid userId, int year, int month, TimeZoneInfo timeZone)
+    {
         var budgets = await _context.Budgets
             .Include(b => b.Category)
             .Where(b => b.UserId == userId && b.Year == year && b.Month == month)
             .ToListAsync();
 
+        var monthStart = ConvertToUtc(new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Unspecified), timeZone);
+        var monthEnd = ConvertToUtc(new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59, DateTimeKind.Unspecified), timeZone);
+
         var transactions = await _context.Transactions
             .Where(t => t.UserId == userId 
-                && t.TransactionDate.Year == year 
-                && t.TransactionDate.Month == month 
+                && t.TransactionDate >= monthStart
+                && t.TransactionDate <= monthEnd
                 && t.Type == TransactionType.Expense)
             .ToListAsync();
 
         var totalBudget = budgets.Where(b => b.Type == BudgetType.Total).Sum(b => b.Amount);
         var categoryBudgets = budgets.Where(b => b.Type == BudgetType.ByCategory).ToList();
         var totalSpent = transactions.Sum(t => t.Amount);
+        var totalPercentage = totalBudget > 0 ? totalSpent / totalBudget : 0;
+        var totalAlertLevel = CalculateAlertLevel(totalPercentage);
 
-        var categorySpending = transactions
-            .Where(t => t.CategoryId.HasValue)
-            .GroupBy(t => t.CategoryId)
-            .Select(g =>
+        var categorySpending = categoryBudgets
+            .Select(budget =>
             {
-                var budget = categoryBudgets.FirstOrDefault(b => b.CategoryId == g.Key);
-                var spent = g.Sum(t => t.Amount);
-                var budgetAmount = budget?.Amount ?? 0;
+                var spent = transactions
+                    .Where(t => t.CategoryId == budget.CategoryId)
+                    .Sum(t => t.Amount);
+                var percentage = budget.Amount > 0 ? spent / budget.Amount : 0;
+                var alertLevel = CalculateAlertLevel(percentage);
+
                 return new CategorySpendingDto(
-                    g.Key,
-                    budget?.Category?.Name ?? "Unknown",
-                    budgetAmount,
+                    budget.CategoryId,
+                    budget.Category?.Name ?? "Unknown",
+                    budget.Amount,
                     spent,
-                    budgetAmount - spent,
-                    spent > budgetAmount
+                    budget.Amount - spent,
+                    percentage,
+                    alertLevel,
+                    spent >= budget.Amount
                 );
             })
             .ToList();
+
+        var uncategorizedSpent = transactions
+            .Where(t => !t.CategoryId.HasValue || !categoryBudgets.Any(b => b.CategoryId == t.CategoryId))
+            .Sum(t => t.Amount);
+
+        if (uncategorizedSpent > 0)
+        {
+            categorySpending.Add(new CategorySpendingDto(
+                null,
+                "未分类",
+                0,
+                uncategorizedSpent,
+                -uncategorizedSpent,
+                0,
+                BudgetAlertLevel.Normal,
+                false
+            ));
+        }
 
         return new BudgetStatusDto(
             year,
@@ -88,9 +122,131 @@ public class BudgetService : IBudgetService
             totalBudget,
             totalSpent,
             totalBudget - totalSpent,
-            totalSpent > totalBudget,
+            totalPercentage,
+            totalAlertLevel,
+            totalSpent >= totalBudget,
             categorySpending
         );
+    }
+
+    public async Task<BudgetAlertDto> GetBudgetAlertsAsync(Guid userId, int year, int month)
+    {
+        return await GetBudgetAlertsAsync(userId, year, month, TimeZoneInfo.Utc);
+    }
+
+    public async Task<BudgetAlertDto> GetBudgetAlertsAsync(Guid userId, int year, int month, TimeZoneInfo timeZone)
+    {
+        var status = await GetBudgetStatusAsync(userId, year, month, timeZone);
+
+        var categoryAlerts = status.CategorySpending
+            .Where(c => c.AlertLevel != BudgetAlertLevel.Normal && c.BudgetAmount > 0)
+            .Select(c => new CategoryAlertDto(
+                c.CategoryId,
+                c.CategoryName,
+                c.AlertLevel,
+                GenerateAlertMessage(c.CategoryName, c.Percentage, c.AlertLevel),
+                c.BudgetAmount,
+                c.SpentAmount,
+                c.Percentage
+            ))
+            .ToList();
+
+        var overallAlertLevel = status.AlertLevel;
+        string? overallMessage = null;
+
+        if (status.TotalBudget > 0 && overallAlertLevel != BudgetAlertLevel.Normal)
+        {
+            overallMessage = GenerateAlertMessage("总预算", status.Percentage, overallAlertLevel);
+        }
+
+        var maxAlertLevel = categoryAlerts.Any() 
+            ? categoryAlerts.Max(c => c.AlertLevel) 
+            : BudgetAlertLevel.Normal;
+        
+        if (maxAlertLevel > overallAlertLevel)
+        {
+            overallAlertLevel = maxAlertLevel;
+        }
+
+        return new BudgetAlertDto(
+            year,
+            month,
+            overallAlertLevel,
+            overallMessage,
+            categoryAlerts
+        );
+    }
+
+    public async Task<BudgetAlertDto?> CheckBudgetAlertAfterTransactionAsync(
+        Guid userId, 
+        TransactionType transactionType, 
+        DateTime transactionDate, 
+        TimeZoneInfo? timeZone = null)
+    {
+        if (transactionType != TransactionType.Expense)
+        {
+            return null;
+        }
+
+        var tz = timeZone ?? TimeZoneInfo.Utc;
+        var localDate = ConvertFromUtc(transactionDate, tz);
+        var year = localDate.Year;
+        var month = localDate.Month;
+
+        var hasBudget = await _context.Budgets
+            .AnyAsync(b => b.UserId == userId && b.Year == year && b.Month == month);
+
+        if (!hasBudget)
+        {
+            return null;
+        }
+
+        return await GetBudgetAlertsAsync(userId, year, month, tz);
+    }
+
+    private static BudgetAlertLevel CalculateAlertLevel(decimal percentage)
+    {
+        if (percentage >= CriticalThreshold)
+        {
+            return BudgetAlertLevel.Critical;
+        }
+        if (percentage >= WarningThreshold)
+        {
+            return BudgetAlertLevel.Warning;
+        }
+        return BudgetAlertLevel.Normal;
+    }
+
+    private static string GenerateAlertMessage(string categoryName, decimal percentage, BudgetAlertLevel level)
+    {
+        var percentageDisplay = Math.Round(percentage * 100, 1);
+        
+        return level switch
+        {
+            BudgetAlertLevel.Warning => $"【提醒】{categoryName}已使用预算的 {percentageDisplay}%，即将达到预算上限",
+            BudgetAlertLevel.Critical => $"【告警】{categoryName}已超支！当前使用 {percentageDisplay}%",
+            _ => string.Empty
+        };
+    }
+
+    private static DateTime ConvertToUtc(DateTime dateTime, TimeZoneInfo timeZone)
+    {
+        if (dateTime.Kind == DateTimeKind.Utc)
+        {
+            return dateTime;
+        }
+        
+        var unspecified = DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(unspecified, timeZone);
+    }
+
+    private static DateTime ConvertFromUtc(DateTime dateTime, TimeZoneInfo timeZone)
+    {
+        if (dateTime.Kind != DateTimeKind.Utc)
+        {
+            dateTime = DateTime.SpecifyKind(dateTime, DateTimeKind.Utc);
+        }
+        return TimeZoneInfo.ConvertTimeFromUtc(dateTime, timeZone);
     }
 
     public async Task<BudgetDto> CreateBudgetAsync(BudgetCreateDto dto, Guid userId)
@@ -98,6 +254,19 @@ public class BudgetService : IBudgetService
         if (dto.Type == BudgetType.ByCategory && !dto.CategoryId.HasValue)
         {
             throw new BadRequestException("CategoryId is required for category budgets");
+        }
+
+        var existingBudget = await _context.Budgets
+            .FirstOrDefaultAsync(b => 
+                b.UserId == userId && 
+                b.Year == dto.Year && 
+                b.Month == dto.Month &&
+                b.Type == dto.Type &&
+                b.CategoryId == dto.CategoryId);
+
+        if (existingBudget != null)
+        {
+            throw new BadRequestException("该月份已存在相同类型的预算");
         }
 
         var budget = new Budget
@@ -132,6 +301,20 @@ public class BudgetService : IBudgetService
         if (dto.Type == BudgetType.ByCategory && !dto.CategoryId.HasValue)
         {
             throw new BadRequestException("CategoryId is required for category budgets");
+        }
+
+        var existingBudget = await _context.Budgets
+            .FirstOrDefaultAsync(b => 
+                b.Id != id &&
+                b.UserId == userId && 
+                b.Year == dto.Year && 
+                b.Month == dto.Month &&
+                b.Type == dto.Type &&
+                b.CategoryId == dto.CategoryId);
+
+        if (existingBudget != null)
+        {
+            throw new BadRequestException("该月份已存在相同类型的预算");
         }
 
         budget.Type = dto.Type;

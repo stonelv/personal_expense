@@ -2,6 +2,13 @@ using PersonalExpense.Domain.Entities;
 
 namespace PersonalExpense.Application.DTOs;
 
+public enum BudgetAlertLevel
+{
+    Normal = 0,
+    Warning = 1,
+    Critical = 2
+}
+
 public record BudgetCreateDto(
     BudgetType Type,
     decimal Amount,
@@ -39,6 +46,8 @@ public record BudgetStatusDto(
     decimal TotalBudget,
     decimal TotalSpent,
     decimal Remaining,
+    decimal Percentage,
+    BudgetAlertLevel AlertLevel,
     bool IsOverBudget,
     List<CategorySpendingDto> CategorySpending
 );
@@ -49,5 +58,30 @@ public record CategorySpendingDto(
     decimal BudgetAmount,
     decimal SpentAmount,
     decimal Remaining,
+    decimal Percentage,
+    BudgetAlertLevel AlertLevel,
     bool IsOverBudget
+);
+
+public record BudgetAlertDto(
+    int Year,
+    int Month,
+    BudgetAlertLevel OverallAlertLevel,
+    string? OverallMessage,
+    List<CategoryAlertDto> CategoryAlerts
+);
+
+public record CategoryAlertDto(
+    Guid? CategoryId,
+    string CategoryName,
+    BudgetAlertLevel AlertLevel,
+    string Message,
+    decimal BudgetAmount,
+    decimal SpentAmount,
+    decimal Percentage
+);
+
+public record TransactionBudgetAlertDto(
+    TransactionDto Transaction,
+    BudgetAlertDto? BudgetAlert
 );
