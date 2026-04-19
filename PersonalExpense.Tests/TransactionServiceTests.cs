@@ -606,4 +606,430 @@ public class TransactionServiceTests
     }
 
     #endregion
+
+    #region Pair Transfer Tests (成对流水转账)
+
+    [Fact]
+    public async Task CreateTransfer_ShouldCreateTwoLinkedTransactions()
+    {
+        // Arrange
+        var fromAccount = await CreateTestAccountAsync("Cash", 5000);
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+        var fromInitial = fromAccount.Balance;
+        var toInitial = toAccount.Balance;
+        var transferAmount = 1000;
+
+        var dto = new TransferCreateDto(
+            Amount: transferAmount,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Monthly transfer",
+            AttachmentUrl: null,
+            FromAccountId: fromAccount.Id,
+            ToAccountId: toAccount.Id
+        );
+
+        // Act
+        var result = await _service.CreateTransferAsync(dto, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.OutgoingTransaction.Should().NotBeNull();
+        result.IncomingTransaction.Should().NotBeNull();
+
+        result.OutgoingTransaction.Type.Should().Be(TransactionType.Expense);
+        result.OutgoingTransaction.Amount.Should().Be(transferAmount);
+        result.OutgoingTransaction.AccountId.Should().Be(fromAccount.Id);
+
+        result.IncomingTransaction.Type.Should().Be(TransactionType.Income);
+        result.IncomingTransaction.Amount.Should().Be(transferAmount);
+        result.IncomingTransaction.AccountId.Should().Be(toAccount.Id);
+
+        result.OutgoingTransaction.RelatedTransactionId.Should().Be(result.IncomingTransaction.Id);
+        result.IncomingTransaction.RelatedTransactionId.Should().Be(result.OutgoingTransaction.Id);
+
+        var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
+        var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
+
+        updatedFromAccount.Should().NotBeNull();
+        updatedToAccount.Should().NotBeNull();
+        updatedFromAccount!.Balance.Should().Be(fromInitial - transferAmount);
+        updatedToAccount!.Balance.Should().Be(toInitial + transferAmount);
+
+        var transactions = await _context.Transactions.ToListAsync();
+        transactions.Count.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task CreateTransfer_WithZeroAmount_ShouldThrowException()
+    {
+        // Arrange
+        var fromAccount = await CreateTestAccountAsync("Cash", 5000);
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var dto = new TransferCreateDto(
+            Amount: 0,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test",
+            AttachmentUrl: null,
+            FromAccountId: fromAccount.Id,
+            ToAccountId: toAccount.Id
+        );
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<BadRequestException>(
+            () => _service.CreateTransferAsync(dto, _userId));
+
+        exception.Message.Should().Contain("greater than 0");
+    }
+
+    [Fact]
+    public async Task CreateTransfer_ToSameAccount_ShouldThrowException()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 5000);
+
+        var dto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test",
+            AttachmentUrl: null,
+            FromAccountId: account.Id,
+            ToAccountId: account.Id
+        );
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<BadRequestException>(
+            () => _service.CreateTransferAsync(dto, _userId));
+
+        exception.Message.Should().Contain("same account");
+    }
+
+    [Fact]
+    public async Task CreateTransfer_WithInsufficientBalance_ShouldThrowException()
+    {
+        // Arrange
+        var fromAccount = await CreateTestAccountAsync("Cash", 500);
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var dto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test",
+            AttachmentUrl: null,
+            FromAccountId: fromAccount.Id,
+            ToAccountId: toAccount.Id
+        );
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<BadRequestException>(
+            () => _service.CreateTransferAsync(dto, _userId));
+
+        exception.Message.Should().Contain("Insufficient balance");
+    }
+
+    [Fact]
+    public async Task CreateTransfer_WithInvalidFromAccount_ShouldNotCreateAnyTransactions()
+    {
+        // Arrange
+        var invalidFromAccountId = Guid.NewGuid();
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+        var toInitial = toAccount.Balance;
+
+        var dto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test",
+            AttachmentUrl: null,
+            FromAccountId: invalidFromAccountId,
+            ToAccountId: toAccount.Id
+        );
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<BadRequestException>(
+            () => _service.CreateTransferAsync(dto, _userId));
+
+        exception.Message.Should().Contain("From account not found");
+
+        var transactions = await _context.Transactions.ToListAsync();
+        transactions.Should().BeEmpty();
+
+        var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
+        updatedToAccount.Should().NotBeNull();
+        updatedToAccount!.Balance.Should().Be(toInitial);
+    }
+
+    [Fact]
+    public async Task DeleteTransferTransaction_ShouldDeleteBothLinkedTransactions()
+    {
+        // Arrange
+        var fromAccount = await CreateTestAccountAsync("Cash", 5000);
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+        var fromInitial = fromAccount.Balance;
+        var toInitial = toAccount.Balance;
+        var transferAmount = 1000;
+
+        var dto = new TransferCreateDto(
+            Amount: transferAmount,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test transfer",
+            AttachmentUrl: null,
+            FromAccountId: fromAccount.Id,
+            ToAccountId: toAccount.Id
+        );
+
+        var result = await _service.CreateTransferAsync(dto, _userId);
+
+        // Act
+        await _service.DeleteTransactionAsync(result.OutgoingTransaction.Id, _userId);
+
+        // Assert
+        var transactions = await _context.Transactions.ToListAsync();
+        transactions.Should().BeEmpty();
+
+        var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
+        var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
+
+        updatedFromAccount.Should().NotBeNull();
+        updatedToAccount.Should().NotBeNull();
+        updatedFromAccount!.Balance.Should().Be(fromInitial);
+        updatedToAccount!.Balance.Should().Be(toInitial);
+    }
+
+    [Fact]
+    public async Task UpdateTransferTransaction_ShouldThrowException()
+    {
+        // Arrange
+        var fromAccount = await CreateTestAccountAsync("Cash", 5000);
+        var toAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var dto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Test transfer",
+            AttachmentUrl: null,
+            FromAccountId: fromAccount.Id,
+            ToAccountId: toAccount.Id
+        );
+
+        var result = await _service.CreateTransferAsync(dto, _userId);
+
+        var updateDto = new TransactionUpdateDto(
+            Type: TransactionType.Expense,
+            Amount: 2000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Updated",
+            AttachmentUrl: null,
+            AccountId: fromAccount.Id,
+            CategoryId: null,
+            TransferToAccountId: toAccount.Id
+        );
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<BadRequestException>(
+            () => _service.UpdateTransactionAsync(result.OutgoingTransaction.Id, updateDto, _userId));
+
+        exception.Message.Should().Contain("Delete and recreate");
+    }
+
+    #endregion
+
+    #region Balance History Tests (余额变动查询)
+
+    [Fact]
+    public async Task GetAccountBalanceHistory_ShouldReturnCorrectHistory()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+        var initialBalance = account.Balance;
+
+        var income1 = new TransactionCreateDto(
+            Type: TransactionType.Income,
+            Amount: 500,
+            TransactionDate: DateTime.UtcNow.AddDays(-2),
+            Description: "Salary",
+            AttachmentUrl: null,
+            AccountId: account.Id,
+            CategoryId: null,
+            TransferToAccountId: null
+        );
+        await _service.CreateTransactionAsync(income1, _userId);
+
+        var expense1 = new TransactionCreateDto(
+            Type: TransactionType.Expense,
+            Amount: 200,
+            TransactionDate: DateTime.UtcNow.AddDays(-1),
+            Description: "Groceries",
+            AttachmentUrl: null,
+            AccountId: account.Id,
+            CategoryId: null,
+            TransferToAccountId: null
+        );
+        await _service.CreateTransactionAsync(expense1, _userId);
+
+        // Act
+        var result = await _service.GetAccountBalanceHistoryAsync(account.Id, _userId, null, null);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.AccountId.Should().Be(account.Id);
+        result.TotalIncome.Should().Be(500);
+        result.TotalExpense.Should().Be(200);
+        result.NetChange.Should().Be(300);
+        result.StartingBalance.Should().Be(initialBalance);
+        result.EndingBalance.Should().Be(initialBalance + 300);
+
+        result.BalanceHistory.Should().HaveCount(2);
+        result.BalanceHistory[0].BalanceAfterTransaction.Should().Be(initialBalance + 500);
+        result.BalanceHistory[1].BalanceAfterTransaction.Should().Be(initialBalance + 500 - 200);
+    }
+
+    [Fact]
+    public async Task GetAccountBalanceHistory_WithTransfer_ShouldShowCorrectBalance()
+    {
+        // Arrange
+        var cashAccount = await CreateTestAccountAsync("Cash", 5000);
+        var bankAccount = await CreateTestAccountAsync("Bank Card", 10000);
+        var cashInitial = cashAccount.Balance;
+        var bankInitial = bankAccount.Balance;
+
+        var transferDto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Transfer",
+            AttachmentUrl: null,
+            FromAccountId: cashAccount.Id,
+            ToAccountId: bankAccount.Id
+        );
+
+        await _service.CreateTransferAsync(transferDto, _userId);
+
+        // Act
+        var cashHistory = await _service.GetAccountBalanceHistoryAsync(cashAccount.Id, _userId, null, null);
+        var bankHistory = await _service.GetAccountBalanceHistoryAsync(bankAccount.Id, _userId, null, null);
+
+        // Assert
+        cashHistory.Should().NotBeNull();
+        cashHistory.NetChange.Should().Be(-1000);
+        cashHistory.EndingBalance.Should().Be(cashInitial - 1000);
+        cashHistory.BalanceHistory.Should().HaveCount(1);
+        cashHistory.BalanceHistory[0].RelatedTransactionId.Should().NotBeNull();
+
+        bankHistory.Should().NotBeNull();
+        bankHistory.NetChange.Should().Be(1000);
+        bankHistory.EndingBalance.Should().Be(bankInitial + 1000);
+        bankHistory.BalanceHistory.Should().HaveCount(1);
+        bankHistory.BalanceHistory[0].RelatedTransactionId.Should().NotBeNull();
+    }
+
+    #endregion
+
+    #region Reconciliation Tests (对账功能)
+
+    [Fact]
+    public async Task ReconcileAccount_WithBalancedAccount_ShouldReturnIsBalancedTrue()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var income1 = new TransactionCreateDto(
+            Type: TransactionType.Income,
+            Amount: 500,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Salary",
+            AttachmentUrl: null,
+            AccountId: account.Id,
+            CategoryId: null,
+            TransferToAccountId: null
+        );
+        await _service.CreateTransactionAsync(income1, _userId);
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var result = await reconciliationService.ReconcileAccountAsync(account.Id, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsBalanced.Should().BeTrue();
+        result.Discrepancies.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReconcileAccount_WithTransferPair_ShouldReturnIsBalancedTrue()
+    {
+        // Arrange
+        var cashAccount = await CreateTestAccountAsync("Cash", 5000);
+        var bankAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var transferDto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Transfer",
+            AttachmentUrl: null,
+            FromAccountId: cashAccount.Id,
+            ToAccountId: bankAccount.Id
+        );
+
+        await _service.CreateTransferAsync(transferDto, _userId);
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var cashResult = await reconciliationService.ReconcileAccountAsync(cashAccount.Id, _userId);
+        var bankResult = await reconciliationService.ReconcileAccountAsync(bankAccount.Id, _userId);
+
+        // Assert
+        cashResult.Should().NotBeNull();
+        bankResult.Should().NotBeNull();
+        cashResult.IsBalanced.Should().BeTrue();
+        bankResult.IsBalanced.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DetectTransferDiscrepancies_WithValidTransfers_ShouldReturnEmpty()
+    {
+        // Arrange
+        var cashAccount = await CreateTestAccountAsync("Cash", 5000);
+        var bankAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var transferDto = new TransferCreateDto(
+            Amount: 1000,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Transfer",
+            AttachmentUrl: null,
+            FromAccountId: cashAccount.Id,
+            ToAccountId: bankAccount.Id
+        );
+
+        await _service.CreateTransferAsync(transferDto, _userId);
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var result = await reconciliationService.DetectTransferDiscrepanciesAsync(_userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReconcileAllAccounts_ShouldReturnAllAccountsResults()
+    {
+        // Arrange
+        var cashAccount = await CreateTestAccountAsync("Cash", 5000);
+        var bankAccount = await CreateTestAccountAsync("Bank Card", 10000);
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var results = await reconciliationService.ReconcileAllAccountsAsync(_userId);
+
+        // Assert
+        results.Should().NotBeNull();
+        results.Should().HaveCount(2);
+        results.All(r => r.IsBalanced).Should().BeTrue();
+    }
+
+    #endregion
 }

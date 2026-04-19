@@ -1,6 +1,255 @@
 @PersonalExpense.API_HostAddress = http://localhost:5096
 
-GET {{PersonalExpense.API_HostAddress}}/weatherforecast/
-Accept: application/json
+### Authentication - Register
+POST {{PersonalExpense.API_HostAddress}}/api/account/register
+Content-Type: application/json
 
+{
+  "email": "test@example.com",
+  "password": "Test12345!"
+}
+
+### Authentication - Login
+# @name login
+POST {{PersonalExpense.API_HostAddress}}/api/account/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Test12345!"
+}
+
+### Get Token from login response
+@token = {{login.response.body.$.token}}
+
+### Accounts - Get All
+GET {{PersonalExpense.API_HostAddress}}/api/accounts
+Authorization: Bearer {{token}}
+
+### Accounts - Create Cash Account
+POST {{PersonalExpense.API_HostAddress}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Cash",
+  "type": 1,
+  "balance": 5000,
+  "description": "Cash in hand"
+}
+
+### Accounts - Create Bank Account
+POST {{PersonalExpense.API_HostAddress}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Bank Card",
+  "type": 2,
+  "balance": 15000,
+  "description": "Main bank account"
+}
+
+### Accounts - Create E-Wallet Account
+POST {{PersonalExpense.API_HostAddress}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "E-Wallet",
+  "type": 5,
+  "balance": 1000,
+  "description": "Mobile payment wallet"
+}
+
+### ============================================================================
+### 多账户转账功能 - 成对流水转账（推荐）
+### ============================================================================
+
+### Transfer - Create Pair Transfer (Recommended)
+# 功能说明：
+# - 在两个账户之间进行转账
+# - 生成成对流水：一条支出记录 + 一条收入记录
+# - 两条记录通过 RelatedTransactionId 互相关联
+# - 保证原子性：如果任意一步失败，全部回滚
+#
+# 请求参数说明：
+# - fromAccountId: 转出账户ID
+# - toAccountId: 转入账户ID  
+# - amount: 转账金额（必须大于0）
+# - transactionDate: 交易日期
+# - description: 描述（可选）
+#
+# 返回结果：
+# - outgoingTransaction: 转出交易记录（Type=Expense）
+# - incomingTransaction: 转入交易记录（Type=Income）
+# - 两条记录的 RelatedTransactionId 互相指向对方
+POST {{PersonalExpense.API_HostAddress}}/api/transactions/transfer
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 1000,
+  "transactionDate": "2026-04-19T10:00:00Z",
+  "description": "Transfer from Bank to Cash",
+  "fromAccountId": "00000000-0000-0000-0000-000000000001",
+  "toAccountId": "00000000-0000-0000-0000-000000000002"
+}
+
+### ============================================================================
+### 余额变动查询
+### ============================================================================
+
+### Account Balance History - Get by Account
+# 功能说明：
+# - 按账户查看余额变动历史
+# - 计算每笔交易后的账户余额
+# - 统计总收入、总支出、净变化
+#
+# 请求参数说明：
+# - accountId: 账户ID（路径参数）
+# - startDate: 开始日期（可选，查询参数）
+# - endDate: 结束日期（可选，查询参数）
+#
+# 返回结果说明：
+# - accountId, accountName, accountType: 账户基本信息
+# - startingBalance: 查询时间范围的起始余额
+# - endingBalance: 查询时间范围的结束余额
+# - totalIncome: 总收入
+# - totalExpense: 总支出
+# - netChange: 净变化（= totalIncome - totalExpense）
+# - balanceHistory: 余额变动明细列表
+#   - transactionDate: 交易日期
+#   - description: 交易描述
+#   - transactionType: 交易类型（Income/Expense/Transfer）
+#   - amount: 交易金额
+#   - balanceAfterTransaction: 该笔交易后的余额
+#   - relatedTransactionId: 关联交易ID（成对转账时存在）
+GET {{PersonalExpense.API_HostAddress}}/api/transactions/account/{{accountId}}/history
+Authorization: Bearer {{token}}
+
+### Account Balance History - With Date Range
+GET {{PersonalExpense.API_HostAddress}}/api/transactions/account/{{accountId}}/history?startDate=2026-01-01&endDate=2026-12-31
+Authorization: Bearer {{token}}
+
+### ============================================================================
+### 对账功能 - 异常差额检测
+### ============================================================================
+
+### Reconciliation - Single Account
+# 功能说明：
+# - 对指定账户进行对账
+# - 验证账户实际余额与交易记录计算的余额是否一致
+# - 检测成对转账是否完整、金额是否匹配
+#
+# 检测项：
+# 1. BalanceMismatch: 账户余额与交易历史计算结果不匹配
+# 2. OrphanTransfer: 存在孤立的转账记录（关联交易缺失）
+# 3. AmountMismatch: 成对转账金额不匹配
+#
+# 返回结果说明：
+# - isBalanced: 是否平衡（无异常）
+# - expectedBalance: 根据交易记录计算的预期余额
+# - actualBalance: 账户实际余额
+# - discrepancy: 差额（= expectedBalance - actualBalance）
+# - discrepancies: 异常明细列表
+GET {{PersonalExpense.API_HostAddress}}/api/reconciliation/account/{{accountId}}
+Authorization: Bearer {{token}}
+
+### Reconciliation - All Accounts
+# 功能说明：
+# - 对用户所有账户进行对账
+# - 返回每个账户的对账结果
+# - 可用于批量检查所有账户状态
+GET {{PersonalExpense.API_HostAddress}}/api/reconciliation/all
+Authorization: Bearer {{token}}
+
+### Reconciliation - Transfer Discrepancies
+# 功能说明：
+# - 专门检测转账相关的异常
+# - 包括：
+#   - MissingRelated: 缺少关联交易
+#   - UnpairedTransfer: 未成对的传统转账
+#
+# 使用场景：
+# - 排查转账操作失败导致的余额不一致
+# - 检查系统迁移后的数据完整性
+# - 定期审计转账记录的完整性
+GET {{PersonalExpense.API_HostAddress}}/api/reconciliation/transfer-discrepancies
+Authorization: Bearer {{token}}
+
+### ============================================================================
+### 传统交易接口（兼容旧版）
+### ============================================================================
+
+### Transactions - Get All
+GET {{PersonalExpense.API_HostAddress}}/api/transactions
+Authorization: Bearer {{token}}
+
+### Transactions - Create Income
+POST {{PersonalExpense.API_HostAddress}}/api/transactions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": 1,
+  "amount": 5000,
+  "transactionDate": "2026-04-19T10:00:00Z",
+  "description": "Salary",
+  "accountId": "00000000-0000-0000-0000-000000000001"
+}
+
+### Transactions - Create Expense
+POST {{PersonalExpense.API_HostAddress}}/api/transactions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": 2,
+  "amount": 200,
+  "transactionDate": "2026-04-19T12:00:00Z",
+  "description": "Lunch",
+  "accountId": "00000000-0000-0000-0000-000000000001"
+}
+
+### Transactions - Create Legacy Transfer (Single Record)
+# 注意：此方式生成单条记录，推荐使用 /api/transactions/transfer 生成成对流水
+POST {{PersonalExpense.API_HostAddress}}/api/transactions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": 3,
+  "amount": 500,
+  "transactionDate": "2026-04-19T14:00:00Z",
+  "description": "Transfer",
+  "accountId": "00000000-0000-0000-0000-000000000001",
+  "transferToAccountId": "00000000-0000-0000-0000-000000000002"
+}
+
+### ============================================================================
+### 接口总览
+### ============================================================================
+
+### 转账功能对比：
 ###
+### 1. 成对流水转账（推荐）
+###    POST /api/transactions/transfer
+###    - 生成2条关联记录（Expense + Income）
+###    - 通过 RelatedTransactionId 互相关联
+###    - 每笔交易独立显示在各自账户的流水中
+###    - 便于对账和审计
+###
+### 2. 传统转账（兼容）
+###    POST /api/transactions  with type=3
+###    - 生成单条记录
+###    - 通过 TransferToAccountId 关联目标账户
+###    - 仅在源账户流水中显示
+###
+### 对账功能：
+### GET /api/reconciliation/account/{accountId}  - 单账户对账
+### GET /api/reconciliation/all                    - 全部账户对账
+### GET /api/reconciliation/transfer-discrepancies - 转账异常检测
+###
+### 余额查询：
+### GET /api/transactions/account/{accountId}/history - 账户余额变动历史
