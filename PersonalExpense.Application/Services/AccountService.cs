@@ -35,22 +35,50 @@ public class AccountService : IAccountService
 
     public async Task<AccountDto> CreateAccountAsync(AccountCreateDto dto, Guid userId)
     {
-        var account = new Account
+        using var transaction = await _context.Database.BeginTransactionAsync();
+        try
         {
-            Id = Guid.NewGuid(),
-            Name = dto.Name,
-            Type = dto.Type,
-            Balance = dto.Balance,
-            Description = dto.Description,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow,
-            UserId = userId
-        };
+            var account = new Account
+            {
+                Id = Guid.NewGuid(),
+                Name = dto.Name,
+                Type = dto.Type,
+                Balance = dto.Balance,
+                Description = dto.Description,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                UserId = userId
+            };
 
-        _context.Accounts.Add(account);
-        await _context.SaveChangesAsync();
+            _context.Accounts.Add(account);
+            await _context.SaveChangesAsync();
 
-        return MapToDto(account);
+            if (dto.Balance != 0)
+            {
+                var initialBalanceTransaction = new Transaction
+                {
+                    Id = Guid.NewGuid(),
+                    Type = dto.Balance > 0 ? TransactionType.Income : TransactionType.Expense,
+                    Amount = Math.Abs(dto.Balance),
+                    TransactionDate = DateTime.UtcNow,
+                    Description = "初始余额",
+                    CreatedAt = DateTime.UtcNow,
+                    UserId = userId,
+                    AccountId = account.Id
+                };
+
+                _context.Transactions.Add(initialBalanceTransaction);
+                await _context.SaveChangesAsync();
+            }
+
+            await transaction.CommitAsync();
+            return MapToDto(account);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<AccountDto> UpdateAccountAsync(Guid id, AccountUpdateDto dto, Guid userId)

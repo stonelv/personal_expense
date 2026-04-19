@@ -10,6 +10,7 @@ namespace PersonalExpense.Application.Services;
 public class ReconciliationService : IReconciliationService
 {
     private readonly ApplicationDbContext _context;
+    private const decimal Tolerance = 0.01m;
 
     public ReconciliationService(ApplicationDbContext context)
     {
@@ -34,23 +35,21 @@ public class ReconciliationService : IReconciliationService
 
         var discrepancies = new List<DiscrepancyItemDto>();
 
-        var totalIncome = transactions
-            .Where(t => t.Type == TransactionType.Income)
-            .Sum(t => t.Amount);
+        var expectedBalance = CalculateExpectedBalance(transactions, accountId);
 
-        var totalExpense = transactions
-            .Where(t => t.Type == TransactionType.Expense)
-            .Sum(t => t.Amount);
+        var actualBalance = account.Balance;
+        var discrepancy = actualBalance - expectedBalance;
 
-        var legacyTransferOut = transactions
-            .Where(t => t.Type == TransactionType.Transfer && t.TransferToAccountId != accountId)
-            .Sum(t => t.Amount);
-
-        var legacyTransferIn = transactions
-            .Where(t => t.Type == TransactionType.Transfer && t.TransferToAccountId == accountId)
-            .Sum(t => t.Amount);
-
-        var calculatedNetChange = totalIncome - totalExpense - legacyTransferOut + legacyTransferIn;
+        if (Math.Abs(discrepancy) > Tolerance)
+        {
+            discrepancies.Add(new DiscrepancyItemDto(
+                Type: "BalanceMismatch",
+                Description: $"账户余额与交易记录不一致。预期：{expectedBalance:F2}，实际：{actualBalance:F2}",
+                Expected: expectedBalance,
+                Actual: actualBalance,
+                Difference: discrepancy
+            ));
+        }
 
         var relatedTransactions = transactions
             .Where(t => t.RelatedTransactionId.HasValue)
@@ -65,17 +64,17 @@ public class ReconciliationService : IReconciliationService
             {
                 discrepancies.Add(new DiscrepancyItemDto(
                     Type: "OrphanTransfer",
-                    Description: $"Transaction {trans.Id} has a missing related transaction",
-                    Expected: 0,
-                    Actual: 1,
-                    Difference: 1
+                    Description: $"交易 {trans.Id} 缺少关联交易",
+                    Expected: 1,
+                    Actual: 0,
+                    Difference: -1
                 ));
             }
-            else if (Math.Abs(related.Amount - trans.Amount) > 0.001m)
+            else if (Math.Abs(related.Amount - trans.Amount) > Tolerance)
             {
                 discrepancies.Add(new DiscrepancyItemDto(
                     Type: "AmountMismatch",
-                    Description: $"Transfer amounts mismatch between transactions {trans.Id} and {related.Id}",
+                    Description: $"转账金额不匹配：交易 {trans.Id} ({trans.Amount:F2}) 和 {related.Id} ({related.Amount:F2})",
                     Expected: trans.Amount,
                     Actual: related.Amount,
                     Difference: related.Amount - trans.Amount
@@ -83,14 +82,16 @@ public class ReconciliationService : IReconciliationService
             }
         }
 
+        var isBalanced = discrepancies.Count == 0;
+
         return new ReconciliationResultDto(
             AccountId: account.Id,
             AccountName: account.Name,
             AccountType: account.Type,
-            IsBalanced: discrepancies.Count == 0,
-            ExpectedBalance: calculatedNetChange,
-            ActualBalance: account.Balance,
-            Discrepancy: 0,
+            IsBalanced: isBalanced,
+            ExpectedBalance: expectedBalance,
+            ActualBalance: actualBalance,
+            Discrepancy: discrepancy,
             Discrepancies: discrepancies,
             ReconciliationDate: DateTime.UtcNow
         );
@@ -138,7 +139,7 @@ public class ReconciliationService : IReconciliationService
                 var referencing = transferTransactions.First(t => t.RelatedTransactionId == transferId);
                 discrepancies.Add(new DiscrepancyItemDto(
                     Type: "MissingRelated",
-                    Description: $"Missing related transaction for {referencing.Id}",
+                    Description: $"交易 {referencing.Id} 的关联交易 {transferId} 不存在",
                     Expected: 1,
                     Actual: 0,
                     Difference: -1
@@ -158,13 +159,13 @@ public class ReconciliationService : IReconciliationService
                     t.Type == TransactionType.Transfer &&
                     t.AccountId == transfer.TransferToAccountId.Value &&
                     t.TransferToAccountId == transfer.AccountId &&
-                    Math.Abs(t.Amount - transfer.Amount) < 0.001m);
+                    Math.Abs(t.Amount - transfer.Amount) < Tolerance);
 
                 if (counterPart == null)
                 {
                     discrepancies.Add(new DiscrepancyItemDto(
                         Type: "UnpairedTransfer",
-                        Description: $"Legacy transfer {transfer.Id} has no counterpart",
+                        Description: $"传统转账 {transfer.Id} 没有对应的配对记录",
                         Expected: 1,
                         Actual: 0,
                         Difference: -1
@@ -174,5 +175,35 @@ public class ReconciliationService : IReconciliationService
         }
 
         return discrepancies;
+    }
+
+    private decimal CalculateExpectedBalance(List<Transaction> transactions, Guid accountId)
+    {
+        var expectedBalance = 0m;
+
+        foreach (var trans in transactions)
+        {
+            switch (trans.Type)
+            {
+                case TransactionType.Income:
+                    expectedBalance += trans.Amount;
+                    break;
+                case TransactionType.Expense:
+                    expectedBalance -= trans.Amount;
+                    break;
+                case TransactionType.Transfer:
+                    if (trans.TransferToAccountId == accountId)
+                    {
+                        expectedBalance += trans.Amount;
+                    }
+                    else
+                    {
+                        expectedBalance -= trans.Amount;
+                    }
+                    break;
+            }
+        }
+
+        return expectedBalance;
     }
 }
