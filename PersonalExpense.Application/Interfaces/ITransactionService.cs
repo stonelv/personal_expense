@@ -9,4 +9,5 @@ public interface ITransactionService
     Task<TransactionDto> CreateTransactionAsync(TransactionCreateDto dto, Guid userId);
     Task<TransactionDto> UpdateTransactionAsync(Guid id, TransactionUpdateDto dto, Guid userId);
     Task DeleteTransactionAsync(Guid id, Guid userId);
+    Task<ImportResultDto> ImportTransactionsAsync(Stream csvStream, Guid userId, Guid accountId);
 }

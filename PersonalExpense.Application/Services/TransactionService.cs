@@ -1,3 +1,7 @@
+using System.Globalization;
+using System.Text;
+using CsvHelper;
+using CsvHelper.Configuration;
 using Microsoft.EntityFrameworkCore;
 using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
@@ -304,5 +308,247 @@ public class TransactionService : ITransactionService
             transaction.TransferToAccountId,
             transaction.TransferToAccount?.Name
         );
+    }
+
+    public async Task<ImportResultDto> ImportTransactionsAsync(Stream csvStream, Guid userId, Guid accountId)
+    {
+        var result = new ImportResultDto();
+        var errors = new List<ImportErrorDto>();
+        var validRecords = new List<TransactionImportDto>();
+
+        var account = await _context.Accounts
+            .FirstOrDefaultAsync(a => a.Id == accountId && a.UserId == userId);
+
+        if (account == null)
+        {
+            throw new BadRequestException("Account not found");
+        }
+
+        var userCategories = await _context.Categories
+            .Where(c => c.UserId == userId && c.IsActive)
+            .ToDictionaryAsync(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
+
+        using var reader = new StreamReader(csvStream, Encoding.UTF8);
+        var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HeaderValidated = null,
+            MissingFieldFound = null,
+            BadDataFound = context =>
+            {
+                errors.Add(new ImportErrorDto
+                {
+                    RowNumber = context.Context.Parser.Row,
+                    ErrorMessage = $"无法解析的数据: {context.RawRecord}",
+                    RawData = context.RawRecord
+                });
+            }
+        };
+
+        using var csv = new CsvReader(reader, csvConfig);
+        var rowNumber = 1;
+
+        try
+        {
+            await csv.ReadAsync();
+            csv.ReadHeader();
+            rowNumber++;
+        }
+        catch (Exception ex)
+        {
+            errors.Add(new ImportErrorDto
+            {
+                RowNumber = 1,
+                ErrorMessage = $"无法读取CSV表头: {ex.Message}",
+                RawData = csv.Context.Parser.RawRecord
+            });
+            result.Errors = errors;
+            result.ErrorCount = errors.Count;
+            return result;
+        }
+
+        var dateFormats = new[] 
+        { 
+            "yyyy-MM-dd", 
+            "yyyy/MM/dd", 
+            "MM/dd/yyyy", 
+            "dd-MM-yyyy", 
+            "yyyy年MM月dd日",
+            "yyyyMMdd"
+        };
+
+        while (await csv.ReadAsync())
+        {
+            var currentRow = rowNumber++;
+            var rawRecord = csv.Context.Parser.RawRecord;
+
+            try
+            {
+                var record = csv.GetRecord<CsvTransactionRecord>();
+                var validationErrors = new List<string>();
+
+                if (string.IsNullOrWhiteSpace(record?.Date))
+                {
+                    validationErrors.Add("日期不能为空");
+                }
+
+                if (string.IsNullOrWhiteSpace(record?.Category))
+                {
+                    validationErrors.Add("分类不能为空");
+                }
+
+                if (string.IsNullOrWhiteSpace(record?.Amount))
+                {
+                    validationErrors.Add("金额不能为空");
+                }
+
+                if (validationErrors.Any())
+                {
+                    errors.Add(new ImportErrorDto
+                    {
+                        RowNumber = currentRow,
+                        ErrorMessage = string.Join("; ", validationErrors),
+                        RawData = rawRecord
+                    });
+                    continue;
+                }
+
+                if (!DateTime.TryParseExact(record!.Date!.Trim(), dateFormats, 
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var transactionDate))
+                {
+                    if (!DateTime.TryParse(record.Date, CultureInfo.InvariantCulture, 
+                        DateTimeStyles.None, out transactionDate))
+                    {
+                        errors.Add(new ImportErrorDto
+                        {
+                            RowNumber = currentRow,
+                            ErrorMessage = $"无效的日期格式: {record.Date}。支持的格式: {string.Join(", ", dateFormats)}",
+                            RawData = rawRecord
+                        });
+                        continue;
+                    }
+                }
+
+                var amountStr = record.Amount!.Trim().Replace("¥", "").Replace("$", "").Replace(",", "");
+                if (!decimal.TryParse(amountStr, NumberStyles.Currency | NumberStyles.Number, 
+                    CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+                {
+                    errors.Add(new ImportErrorDto
+                    {
+                        RowNumber = currentRow,
+                        ErrorMessage = $"无效的金额: {record.Amount}。金额必须是大于0的数字",
+                        RawData = rawRecord
+                    });
+                    continue;
+                }
+
+                validRecords.Add(new TransactionImportDto
+                {
+                    TransactionDate = transactionDate,
+                    CategoryName = record.Category!.Trim(),
+                    Amount = amount,
+                    Description = record.Description?.Trim(),
+                    RowNumber = currentRow
+                });
+            }
+            catch (Exception ex)
+            {
+                errors.Add(new ImportErrorDto
+                {
+                    RowNumber = currentRow,
+                    ErrorMessage = $"解析行数据时出错: {ex.Message}",
+                    RawData = rawRecord
+                });
+            }
+        }
+
+        result.TotalRows = validRecords.Count + errors.Count;
+        result.ErrorCount = errors.Count;
+
+        if (!validRecords.Any())
+        {
+            result.Errors = errors;
+            return result;
+        }
+
+        using var dbTransaction = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            var addedCount = 0;
+            var skippedCount = 0;
+
+            foreach (var importRecord in validRecords)
+            {
+                var categoryName = importRecord.CategoryName;
+                if (!userCategories.TryGetValue(categoryName, out var category))
+                {
+                    var newCategory = new Category
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = categoryName,
+                        Type = CategoryType.Expense,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                        UserId = userId
+                    };
+                    _context.Categories.Add(newCategory);
+                    await _context.SaveChangesAsync();
+                    category = newCategory;
+                    userCategories[categoryName] = category;
+                }
+
+                var isDuplicate = await _context.Transactions
+                    .AnyAsync(t => 
+                        t.UserId == userId &&
+                        t.AccountId == accountId &&
+                        t.TransactionDate == importRecord.TransactionDate &&
+                        t.Amount == importRecord.Amount &&
+                        t.CategoryId == category.Id &&
+                        t.Description == importRecord.Description);
+
+                if (isDuplicate)
+                {
+                    skippedCount++;
+                    errors.Add(new ImportErrorDto
+                    {
+                        RowNumber = importRecord.RowNumber,
+                        ErrorMessage = "跳过: 重复记录",
+                        RawData = $"日期: {importRecord.TransactionDate:yyyy-MM-dd}, 分类: {importRecord.CategoryName}, 金额: {importRecord.Amount}"
+                    });
+                    continue;
+                }
+
+                var newTransaction = new Transaction
+                {
+                    Id = Guid.NewGuid(),
+                    Type = TransactionType.Expense,
+                    Amount = importRecord.Amount,
+                    TransactionDate = importRecord.TransactionDate,
+                    Description = importRecord.Description,
+                    CreatedAt = DateTime.UtcNow,
+                    UserId = userId,
+                    AccountId = accountId,
+                    CategoryId = category.Id
+                };
+
+                _context.Transactions.Add(newTransaction);
+                account.Balance -= importRecord.Amount;
+                addedCount++;
+            }
+
+            await _context.SaveChangesAsync();
+            await dbTransaction.CommitAsync();
+
+            result.AddedCount = addedCount;
+            result.SkippedCount = skippedCount;
+            result.ErrorCount = errors.Count;
+            result.Errors = errors;
+        }
+        catch
+        {
+            await dbTransaction.RollbackAsync();
+            throw;
+        }
+
+        return result;
     }
 }

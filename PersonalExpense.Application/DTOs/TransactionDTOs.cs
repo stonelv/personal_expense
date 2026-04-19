@@ -1,4 +1,6 @@
 using PersonalExpense.Domain.Entities;
+using CsvHelper.Configuration;
+using CsvHelper.Configuration.Attributes;
 
 namespace PersonalExpense.Application.DTOs;
 
@@ -50,4 +52,45 @@ public class TransactionFilterParams : PaginationParams
     public Guid? CategoryId { get; set; }
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
+}
+
+public record CsvTransactionRecord
+{
+    [Name("日期")]
+    public string? Date { get; set; }
+
+    [Name("分类")]
+    public string? Category { get; set; }
+
+    [Name("金额")]
+    public string? Amount { get; set; }
+
+    [Name("备注")]
+    public string? Description { get; set; }
+}
+
+public record ImportErrorDto
+{
+    public int RowNumber { get; set; }
+    public string ErrorMessage { get; set; } = string.Empty;
+    public string? RawData { get; set; }
+}
+
+public record ImportResultDto
+{
+    public int TotalRows { get; set; }
+    public int AddedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public int ErrorCount { get; set; }
+    public List<ImportErrorDto> Errors { get; set; } = new();
+    public bool IsSuccess => ErrorCount == 0;
+}
+
+public record TransactionImportDto
+{
+    public DateTime TransactionDate { get; set; }
+    public string CategoryName { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string? Description { get; set; }
+    public int RowNumber { get; set; }
 }

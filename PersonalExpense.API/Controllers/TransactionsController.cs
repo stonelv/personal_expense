@@ -92,4 +92,29 @@ public class TransactionsController : ControllerBase
         await _transactionService.DeleteTransactionAsync(id, userId);
         return NoContent();
     }
+
+    [HttpPost("import")]
+    public async Task<ActionResult<ImportResultDto>> ImportTransactions(
+        IFormFile file, 
+        [FromQuery] Guid accountId)
+    {
+        if (file == null || file.Length == 0)
+        {
+            throw new BadRequestException("请上传有效的CSV文件");
+        }
+
+        var allowedExtensions = new[] { ".csv" };
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!allowedExtensions.Contains(extension))
+        {
+            throw new BadRequestException("仅支持CSV格式的文件");
+        }
+
+        var userId = GetCurrentUserId();
+
+        using var stream = file.OpenReadStream();
+        var result = await _transactionService.ImportTransactionsAsync(stream, userId, accountId);
+
+        return Ok(result);
+    }
 }
