@@ -183,7 +183,8 @@ public class AnalyticsService : IAnalyticsService
             .Include(t => t.TransferToAccount)
             .Where(t => t.UserId == userId
                 && t.TransactionDate.Year == year
-                && t.TransactionDate.Month == month);
+                && t.TransactionDate.Month == month
+                && t.Type != TransactionType.Transfer);
 
         if (categoryId.HasValue)
         {
