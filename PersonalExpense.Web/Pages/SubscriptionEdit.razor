@@ -1,0 +1,297 @@
+@page "/subscriptions/new"
+@page "/subscriptions/{Id:guid}/edit"
+
+@using PersonalExpense.Web.DTOs
+@using PersonalExpense.Web.Services
+@inject ISubscriptionService SubscriptionService
+@inject NavigationManager NavigationManager
+
+<PageTitle>@(IsEditMode ? "编辑订阅" : "新增订阅")</PageTitle>
+
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <span class="bi @(IsEditMode ? "bi-pencil-square" : "bi-plus-circle")"></span>
+                        @(IsEditMode ? "编辑订阅" : "新增订阅")
+                    </h5>
+                </div>
+                <div class="card-body">
+                    @if (IsLoading)
+                    {
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <EditForm Model="@FormModel" OnValidSubmit="HandleSubmit">
+                            <DataAnnotationsValidator />
+                            <ValidationSummary class="text-danger" />
+
+                            <div class="mb-3">
+                                <label class="form-label required">订阅名称</label>
+                                <InputText class="form-control" @bind-Value="FormModel.Name" placeholder="如: Netflix、房租等" />
+                                <ValidationMessage For="@(() => FormModel.Name)" class="text-danger small" />
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label required">类型</label>
+                                    <InputSelect class="form-select" @bind-Value="FormModel.Type">
+                                        <option value="">请选择</option>
+                                        <option value="@((int)TransactionType.Expense)">支出</option>
+                                        <option value="@((int)TransactionType.Income)">收入</option>
+                                    </InputSelect>
+                                    <ValidationMessage For="@(() => FormModel.Type)" class="text-danger small" />
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label required">金额</label>
+                                    <InputNumber class="form-control" @bind-Value="FormModel.Amount" min="0" step="0.01" placeholder="0.00" />
+                                    <ValidationMessage For="@(() => FormModel.Amount)" class="text-danger small" />
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label required">频率</label>
+                                    <InputSelect class="form-select" @bind-Value="FormModel.Frequency">
+                                        <option value="">请选择</option>
+                                        <option value="@((int)SubscriptionFrequency.Daily)">每日</option>
+                                        <option value="@((int)SubscriptionFrequency.Weekly)">每周</option>
+                                        <option value="@((int)SubscriptionFrequency.Monthly)">每月</option>
+                                        <option value="@((int)SubscriptionFrequency.Yearly)">每年</option>
+                                    </InputSelect>
+                                    <ValidationMessage For="@(() => FormModel.Frequency)" class="text-danger small" />
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label required">开始日期</label>
+                                    <InputDate class="form-control" @bind-Value="FormModel.StartDate" />
+                                    <ValidationMessage For="@(() => FormModel.StartDate)" class="text-danger small" />
+                                </div>
+                            </div>
+
+                            @if (IsEditMode)
+                            {
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">结束日期</label>
+                                        <InputDate class="form-control" @bind-Value="FormModel.EndDate" />
+                                        <small class="text-muted">留空表示无限期</small>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label required">状态</label>
+                                        <InputSelect class="form-select" @bind-Value="FormModel.Status">
+                                            <option value="@((int)SubscriptionStatus.Active)">活跃</option>
+                                            <option value="@((int)SubscriptionStatus.Paused)">暂停</option>
+                                            <option value="@((int)SubscriptionStatus.Cancelled)">已取消</option>
+                                        </InputSelect>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="mb-3">
+                                    <label class="form-label">结束日期</label>
+                                    <InputDate class="form-control" @bind-Value="FormModel.EndDate" />
+                                    <small class="text-muted">留空表示无限期</small>
+                                </div>
+                            }
+
+                            <div class="mb-3">
+                                <label class="form-label">描述</label>
+                                <InputTextArea class="form-control" @bind-Value="FormModel.Description" rows="2" placeholder="可选的描述信息" />
+                            </div>
+
+                            <div class="card-footer bg-transparent px-0 pt-4 pb-0">
+                                <div class="d-flex justify-content-between">
+                                    <button type="button" class="btn btn-secondary" @onclick="Cancel">
+                                        <span class="bi bi-x-circle"></span> 取消
+                                    </button>
+                                    <button type="submit" class="btn btn-primary" disabled="@IsSaving">
+                                        @if (IsSaving)
+                                        {
+                                            <span class="spinner-border spinner-border-sm"></span> 保存中...
+                                        }
+                                        else
+                                        {
+                                            <span><span class="bi bi-check-circle"></span> @(IsEditMode ? "保存修改" : "创建订阅")</span>
+                                        }
+                                    </button>
+                                </div>
+                            </div>
+                        </EditForm>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public Guid? Id { get; set; }
+
+    private bool IsEditMode => Id.HasValue && Id != Guid.Empty;
+    private bool IsLoading { get; set; }
+    private bool IsSaving { get; set; }
+
+    private SubscriptionEditFormModel FormModel { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (IsEditMode)
+        {
+            await LoadSubscriptionAsync();
+        }
+        else
+        {
+            FormModel = new SubscriptionEditFormModel
+            {
+                Type = TransactionType.Expense,
+                Frequency = SubscriptionFrequency.Monthly,
+                StartDate = DateTime.Today,
+                Status = SubscriptionStatus.Active
+            };
+        }
+    }
+
+    private async Task LoadSubscriptionAsync()
+    {
+        if (!Id.HasValue) return;
+
+        IsLoading = true;
+        try
+        {
+            var subscription = await SubscriptionService.GetSubscriptionByIdAsync(Id.Value);
+            if (subscription != null)
+            {
+                FormModel = new SubscriptionEditFormModel
+                {
+                    Name = subscription.Name,
+                    Amount = subscription.Amount,
+                    Type = subscription.Type,
+                    Frequency = subscription.Frequency,
+                    StartDate = subscription.StartDate,
+                    EndDate = subscription.EndDate,
+                    Status = subscription.Status,
+                    Description = subscription.Description,
+                    AccountId = subscription.AccountId,
+                    CategoryId = subscription.CategoryId
+                };
+            }
+            else
+            {
+                NavigationManager.NavigateTo("/subscriptions");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载订阅失败: {ex.Message}");
+            NavigationManager.NavigateTo("/subscriptions");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (FormModel == null) return;
+
+        IsSaving = true;
+        try
+        {
+            if (IsEditMode && Id.HasValue)
+            {
+                var updateDto = new SubscriptionUpdateDto(
+                    Name: FormModel.Name,
+                    Amount: FormModel.Amount,
+                    Type: FormModel.Type,
+                    Frequency: FormModel.Frequency,
+                    StartDate: FormModel.StartDate,
+                    EndDate: FormModel.EndDate,
+                    Status: FormModel.Status,
+                    Description: FormModel.Description,
+                    AccountId: FormModel.AccountId,
+                    CategoryId: FormModel.CategoryId
+                );
+
+                var success = await SubscriptionService.UpdateSubscriptionAsync(Id.Value, updateDto);
+                if (success)
+                {
+                    NavigationManager.NavigateTo("/subscriptions");
+                }
+            }
+            else
+            {
+                var createDto = new SubscriptionCreateDto(
+                    Name: FormModel.Name,
+                    Amount: FormModel.Amount,
+                    Type: FormModel.Type,
+                    Frequency: FormModel.Frequency,
+                    StartDate: FormModel.StartDate,
+                    EndDate: FormModel.EndDate,
+                    Description: FormModel.Description,
+                    AccountId: FormModel.AccountId,
+                    CategoryId: FormModel.CategoryId
+                );
+
+                var result = await SubscriptionService.CreateSubscriptionAsync(createDto);
+                if (result != null)
+                {
+                    NavigationManager.NavigateTo("/subscriptions");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"保存订阅失败: {ex.Message}");
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/subscriptions");
+    }
+}
+
+public class SubscriptionEditFormModel
+{
+    [Required(ErrorMessage = "订阅名称不能为空")]
+    [StringLength(100, ErrorMessage = "订阅名称不能超过100个字符")]
+    public string Name { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "金额不能为空")]
+    [Range(0.01, 999999999, ErrorMessage = "金额必须大于0")]
+    public decimal Amount { get; set; }
+
+    [Required(ErrorMessage = "请选择类型")]
+    public TransactionType Type { get; set; }
+
+    [Required(ErrorMessage = "请选择频率")]
+    public SubscriptionFrequency Frequency { get; set; }
+
+    [Required(ErrorMessage = "开始日期不能为空")]
+    public DateTime StartDate { get; set; }
+
+    public DateTime? EndDate { get; set; }
+
+    public SubscriptionStatus Status { get; set; }
+
+    [StringLength(500, ErrorMessage = "描述不能超过500个字符")]
+    public string? Description { get; set; }
+
+    public Guid AccountId { get; set; }
+
+    public Guid? CategoryId { get; set; }
+}

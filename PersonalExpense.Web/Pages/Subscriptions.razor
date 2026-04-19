@@ -1,0 +1,472 @@
+@page "/subscriptions"
+@using PersonalExpense.Web.DTOs
+@using PersonalExpense.Web.Services
+@inject ISubscriptionService SubscriptionService
+@inject NavigationManager NavigationManager
+
+<PageTitle>订阅管理</PageTitle>
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>订阅管理</h1>
+        <button class="btn btn-primary" @onclick="() => NavigationManager.NavigateTo("/subscriptions/new")">
+            <span class="bi bi-plus-circle"></span> 新增订阅
+        </button>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">状态</label>
+                    <select class="form-select" @bind="FilterStatus" @bind:event="oninput">
+                        <option value="">全部</option>
+                        <option value="@((int)SubscriptionStatus.Active)">活跃</option>
+                        <option value="@((int)SubscriptionStatus.Paused)">暂停</option>
+                        <option value="@((int)SubscriptionStatus.Cancelled)">已取消</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">频率</label>
+                    <select class="form-select" @bind="FilterFrequency" @bind:event="oninput">
+                        <option value="">全部</option>
+                        <option value="@((int)SubscriptionFrequency.Daily)">每日</option>
+                        <option value="@((int)SubscriptionFrequency.Weekly)">每周</option>
+                        <option value="@((int)SubscriptionFrequency.Monthly)">每月</option>
+                        <option value="@((int)SubscriptionFrequency.Yearly)">每年</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">类型</label>
+                    <select class="form-select" @bind="FilterType" @bind:event="oninput">
+                        <option value="">全部</option>
+                        <option value="@((int)TransactionType.Income)">收入</option>
+                        <option value="@((int)TransactionType.Expense)">支出</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button class="btn btn-outline-secondary w-100" @onclick="ResetFilters">
+                        重置筛选
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-3 text-muted">加载中...</p>
+        </div>
+    }
+    else if (Subscriptions == null || Subscriptions.Items.Count == 0)
+    {
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <span class="bi bi-calendar-x fs-1 text-muted"></span>
+                <h5 class="mt-3 text-muted">暂无订阅</h5>
+                <p class="text-muted">点击上方按钮添加您的第一个订阅</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            @foreach (var subscription in Subscriptions.Items)
+            {
+                <div class="col-md-6 col-lg-4 mb-4">
+                    <div class="card h-100 @GetCardBorderClass(subscription.Status)">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">@subscription.Name</h6>
+                            <span class="badge @GetStatusBadgeClass(subscription.Status)">
+                                @GetStatusText(subscription.Status)
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <h3 class="@(subscription.Type == TransactionType.Income ? "text-success" : "text-danger")">
+                                    @(subscription.Type == TransactionType.Income ? "+" : "-")¥@subscription.Amount.ToString("F2")
+                                </h3>
+                            </div>
+                            <div class="row text-muted small mb-2">
+                                <div class="col-6">
+                                    <strong>频率:</strong> @GetFrequencyText(subscription.Frequency)
+                                </div>
+                                <div class="col-6">
+                                    <strong>账户:</strong> @subscription.AccountName
+                                </div>
+                            </div>
+                            @if (!string.IsNullOrEmpty(subscription.CategoryName))
+                            {
+                                <div class="text-muted small mb-2">
+                                    <strong>分类:</strong> @subscription.CategoryName
+                                </div>
+                            }
+                            <div class="text-muted small mb-2">
+                                <strong>下次到期:</strong> @subscription.NextDueDate.ToString("yyyy-MM-dd")
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="badge @GetDaysBadgeClass(subscription.DaysUntilDue)">
+                                    @GetDaysText(subscription.DaysUntilDue)
+                                </span>
+                                @if (subscription.LastPaidDate.HasValue)
+                                {
+                                    <small class="text-muted">
+                                        上次支付: @subscription.LastPaidDate.Value.ToString("yyyy-MM-dd")
+                                    </small>
+                                }
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="btn-group w-100">
+                                <button class="btn btn-outline-primary btn-sm" 
+                                        @onclick="() => NavigationManager.NavigateTo($"/subscriptions/{subscription.Id}/edit")">
+                                    <span class="bi bi-pencil"></span> 编辑
+                                </button>
+                                @if (subscription.Status == SubscriptionStatus.Active)
+                                {
+                                    <button class="btn btn-outline-success btn-sm" 
+                                            @onclick="() => ShowRecordPaymentModal(subscription)">
+                                        <span class="bi bi-check-circle"></span> 记账
+                                    </button>
+                                }
+                                <button class="btn btn-outline-danger btn-sm" 
+                                        @onclick="() => ShowDeleteConfirm(subscription)">
+                                    <span class="bi bi-trash"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (Subscriptions.TotalPages > 1)
+        {
+            <nav class="d-flex justify-content-center mt-4">
+                <ul class="pagination">
+                    <li class="page-item @(!Subscriptions.HasPrevious ? "disabled" : "")">
+                        <button class="page-link" @onclick="() => GoToPage(Subscriptions.PageNumber - 1)" disabled="@(!Subscriptions.HasPrevious)">
+                            上一页
+                        </button>
+                    </li>
+                    @for (int i = 1; i <= Subscriptions.TotalPages; i++)
+                    {
+                        <li class="page-item @(i == Subscriptions.PageNumber ? "active" : "")">
+                            <button class="page-link" @onclick="() => GoToPage(i)">
+                                @i
+                            </button>
+                        </li>
+                    }
+                    <li class="page-item @(!Subscriptions.HasNext ? "disabled" : "")">
+                        <button class="page-link" @onclick="() => GoToPage(Subscriptions.PageNumber + 1)" disabled="@(!Subscriptions.HasNext)">
+                            下一页
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+        }
+    }
+</div>
+
+@if (ShowDeleteModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">确认删除</h5>
+                    <button type="button" class="btn-close" @onclick="HideDeleteConfirm"></button>
+                </div>
+                <div class="modal-body">
+                    <p>确定要删除订阅 "<strong>@SelectedSubscription?.Name</strong>" 吗？</p>
+                    <p class="text-danger small">此操作无法撤销。</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="HideDeleteConfirm">取消</button>
+                    <button type="button" class="btn btn-danger" @onclick="DeleteSubscription" disabled="@IsDeleting">
+                        @if (IsDeleting)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span> 删除中...
+                        }
+                        else
+                        {
+                            <span>确认删除</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (ShowPaymentModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">记录支付 - @SelectedSubscription?.Name</h5>
+                    <button type="button" class="btn-close" @onclick="HideRecordPaymentModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">支付日期</label>
+                        <input type="date" class="form-control" 
+                               @bind="PaymentDate" @bind:event="oninput"
+                               max="@DateTime.Now.ToString("yyyy-MM-dd")" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">备注</label>
+                        <textarea class="form-control" rows="2" @bind="PaymentDescription"></textarea>
+                    </div>
+                    <div class="alert alert-info">
+                        <strong>金额:</strong> ¥@SelectedSubscription?.Amount.ToString("F2")<br />
+                        <strong>账户:</strong> @SelectedSubscription?.AccountName
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="HideRecordPaymentModal">取消</button>
+                    <button type="button" class="btn btn-primary" @onclick="RecordPayment" disabled="@IsRecording">
+                        @if (IsRecording)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span> 处理中...
+                        }
+                        else
+                        {
+                            <span>确认记账</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsLoading { get; set; }
+    private PagedResult<SubscriptionDto>? Subscriptions { get; set; }
+    private int CurrentPage { get; set; } = 1;
+    private int PageSize { get; set; } = 10;
+
+    private int? FilterStatus { get; set; }
+    private int? FilterFrequency { get; set; }
+    private int? FilterType { get; set; }
+
+    private bool ShowDeleteModal { get; set; }
+    private SubscriptionDto? SelectedSubscription { get; set; }
+    private bool IsDeleting { get; set; }
+
+    private bool ShowPaymentModal { get; set; }
+    private DateTime PaymentDate { get; set; } = DateTime.Now;
+    private string? PaymentDescription { get; set; }
+    private bool IsRecording { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSubscriptionsAsync();
+    }
+
+    private async Task LoadSubscriptionsAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            SubscriptionStatus? status = FilterStatus.HasValue ? (SubscriptionStatus)FilterStatus.Value : null;
+            SubscriptionFrequency? frequency = FilterFrequency.HasValue ? (SubscriptionFrequency)FilterFrequency.Value : null;
+            TransactionType? type = FilterType.HasValue ? (TransactionType)FilterType.Value : null;
+
+            Subscriptions = await SubscriptionService.GetSubscriptionsAsync(
+                status: status,
+                frequency: frequency,
+                type: type,
+                pageNumber: CurrentPage,
+                pageSize: PageSize
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载订阅失败: {ex.Message}");
+            Subscriptions = new PagedResult<SubscriptionDto>(
+                Items: new List<SubscriptionDto>(),
+                TotalCount: 0,
+                PageNumber: CurrentPage,
+                PageSize: PageSize
+            );
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async void GoToPage(int pageNumber)
+    {
+        if (pageNumber < 1) return;
+        CurrentPage = pageNumber;
+        await LoadSubscriptionsAsync();
+    }
+
+    private async void ResetFilters()
+    {
+        FilterStatus = null;
+        FilterFrequency = null;
+        FilterType = null;
+        CurrentPage = 1;
+        await LoadSubscriptionsAsync();
+    }
+
+    private void ShowDeleteConfirm(SubscriptionDto subscription)
+    {
+        SelectedSubscription = subscription;
+        ShowDeleteModal = true;
+    }
+
+    private void HideDeleteConfirm()
+    {
+        ShowDeleteModal = false;
+        SelectedSubscription = null;
+        IsDeleting = false;
+    }
+
+    private async Task DeleteSubscription()
+    {
+        if (SelectedSubscription == null) return;
+
+        IsDeleting = true;
+        try
+        {
+            var success = await SubscriptionService.DeleteSubscriptionAsync(SelectedSubscription.Id);
+            if (success)
+            {
+                HideDeleteConfirm();
+                await LoadSubscriptionsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"删除订阅失败: {ex.Message}");
+        }
+        finally
+        {
+            IsDeleting = false;
+        }
+    }
+
+    private void ShowRecordPaymentModal(SubscriptionDto subscription)
+    {
+        SelectedSubscription = subscription;
+        PaymentDate = DateTime.Now;
+        PaymentDescription = null;
+        ShowPaymentModal = true;
+    }
+
+    private void HideRecordPaymentModal()
+    {
+        ShowPaymentModal = false;
+        SelectedSubscription = null;
+        IsRecording = false;
+    }
+
+    private async Task RecordPayment()
+    {
+        if (SelectedSubscription == null) return;
+
+        IsRecording = true;
+        try
+        {
+            var dto = new RecordSubscriptionPaymentDto(
+                PaymentDate: PaymentDate,
+                Description: PaymentDescription,
+                AttachmentUrl: null
+            );
+
+            var result = await SubscriptionService.RecordPaymentAsync(SelectedSubscription.Id, dto);
+            if (result != null)
+            {
+                HideRecordPaymentModal();
+                await LoadSubscriptionsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"记录支付失败: {ex.Message}");
+        }
+        finally
+        {
+            IsRecording = false;
+        }
+    }
+
+    private string GetCardBorderClass(SubscriptionStatus status)
+    {
+        return status switch
+        {
+            SubscriptionStatus.Active => "border-primary",
+            SubscriptionStatus.Paused => "border-warning",
+            SubscriptionStatus.Cancelled => "border-secondary",
+            _ => ""
+        };
+    }
+
+    private string GetStatusBadgeClass(SubscriptionStatus status)
+    {
+        return status switch
+        {
+            SubscriptionStatus.Active => "bg-success",
+            SubscriptionStatus.Paused => "bg-warning",
+            SubscriptionStatus.Cancelled => "bg-secondary",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetStatusText(SubscriptionStatus status)
+    {
+        return status switch
+        {
+            SubscriptionStatus.Active => "活跃",
+            SubscriptionStatus.Paused => "暂停",
+            SubscriptionStatus.Cancelled => "已取消",
+            _ => "未知"
+        };
+    }
+
+    private string GetFrequencyText(SubscriptionFrequency frequency)
+    {
+        return frequency switch
+        {
+            SubscriptionFrequency.Daily => "每日",
+            SubscriptionFrequency.Weekly => "每周",
+            SubscriptionFrequency.Monthly => "每月",
+            SubscriptionFrequency.Yearly => "每年",
+            _ => "未知"
+        };
+    }
+
+    private string GetDaysBadgeClass(int days)
+    {
+        return days switch
+        {
+            < 0 => "bg-secondary",
+            0 => "bg-danger",
+            1 => "bg-danger",
+            2 => "bg-warning",
+            3 => "bg-info",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetDaysText(int days)
+    {
+        return days switch
+        {
+            < 0 => "已逾期",
+            0 => "今天",
+            1 => "明天",
+            _ => $"{days}天后"
+        };
+    }
+}
