@@ -11,5 +11,5 @@ public interface ISubscriptionService
     Task DeleteSubscriptionAsync(Guid id, Guid userId);
     Task<TransactionDto> RecordSubscriptionPaymentAsync(Guid subscriptionId, RecordSubscriptionPaymentDto dto, Guid userId);
     Task<List<SubscriptionReminderDto>> GetUpcomingRemindersAsync(Guid userId, int daysInAdvance = 3);
-    Task GenerateUpcomingTransactionsAsync(Guid userId);
+    Task<List<TransactionDto>> GenerateUpcomingTransactionsAsync(Guid userId);
 }

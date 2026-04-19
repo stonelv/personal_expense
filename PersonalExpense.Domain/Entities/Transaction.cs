@@ -27,4 +27,5 @@ public class Transaction
     public Account? TransferToAccount { get; set; }
     public Guid? SubscriptionId { get; set; }
     public Subscription? Subscription { get; set; }
+    public bool IsGeneratedFromSubscription { get; set; }
 }

@@ -4,7 +4,6 @@ using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
-using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
 
@@ -20,11 +19,6 @@ public class TransactionsController : ControllerBase
         _transactionService = transactionService;
     }
 
-    private Guid GetCurrentUserId()
-    {
-        return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
-    }
-
     [HttpGet]
     public async Task<ActionResult<PagedResult<TransactionDto>>> GetTransactions(
         [FromQuery] int? year, 
@@ -37,7 +31,7 @@ public class TransactionsController : ControllerBase
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 20)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var filter = new TransactionFilterParams
         {
             Year = year,
@@ -58,7 +52,7 @@ public class TransactionsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<TransactionDto>> GetTransaction(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var transaction = await _transactionService.GetTransactionByIdAsync(id, userId);
         
         if (transaction == null)
@@ -72,7 +66,7 @@ public class TransactionsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TransactionDto>> PostTransaction(TransactionCreateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var transaction = await _transactionService.CreateTransactionAsync(dto, userId);
         return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
     }
@@ -80,7 +74,7 @@ public class TransactionsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> PutTransaction(Guid id, TransactionUpdateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _transactionService.UpdateTransactionAsync(id, dto, userId);
         return NoContent();
     }
@@ -88,7 +82,7 @@ public class TransactionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTransaction(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _transactionService.DeleteTransactionAsync(id, userId);
         return NoContent();
     }

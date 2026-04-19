@@ -302,7 +302,9 @@ public class TransactionService : ITransactionService
             transaction.CategoryId,
             transaction.Category?.Name,
             transaction.TransferToAccountId,
-            transaction.TransferToAccount?.Name
+            transaction.TransferToAccount?.Name,
+            transaction.SubscriptionId,
+            transaction.IsGeneratedFromSubscription
         );
     }
 }

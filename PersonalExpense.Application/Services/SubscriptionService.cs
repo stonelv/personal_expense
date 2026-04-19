@@ -166,7 +166,7 @@ public class SubscriptionService : ISubscriptionService
             throw new BadRequestException("End date cannot be earlier than start date");
         }
 
-        var nextDueDate = CalculateNextDueDate(dto.StartDate, dto.Frequency, DateTime.UtcNow);
+        var frequencyChanged = subscription.Frequency != dto.Frequency;
 
         subscription.Name = dto.Name;
         subscription.Amount = dto.Amount;
@@ -174,12 +174,16 @@ public class SubscriptionService : ISubscriptionService
         subscription.Frequency = dto.Frequency;
         subscription.StartDate = dto.StartDate;
         subscription.EndDate = dto.EndDate;
-        subscription.NextDueDate = nextDueDate;
         subscription.Status = dto.Status;
         subscription.Description = dto.Description;
         subscription.AccountId = dto.AccountId;
         subscription.CategoryId = dto.CategoryId;
         subscription.UpdatedAt = DateTime.UtcNow;
+
+        if (frequencyChanged)
+        {
+            subscription.NextDueDate = CalculateNextDueDate(subscription.NextDueDate, dto.Frequency, subscription.NextDueDate);
+        }
 
         await _context.SaveChangesAsync();
 
@@ -277,9 +281,77 @@ public class SubscriptionService : ISubscriptionService
         )).ToList();
     }
 
-    public Task GenerateUpcomingTransactionsAsync(Guid userId)
+    public async Task<List<TransactionDto>> GenerateUpcomingTransactionsAsync(Guid userId)
     {
-        return Task.CompletedTask;
+        var today = DateTime.UtcNow.Date;
+        var activeSubscriptions = await _context.Subscriptions
+            .Include(s => s.Account)
+            .Where(s => s.UserId == userId
+                && s.Status == SubscriptionStatus.Active)
+            .ToListAsync();
+
+        var generatedTransactions = new List<Transaction>();
+
+        foreach (var subscription in activeSubscriptions)
+        {
+            var nextDueDate = subscription.NextDueDate.Date;
+
+            var existingTransaction = await _context.Transactions
+                .FirstOrDefaultAsync(t =>
+                    t.SubscriptionId == subscription.Id
+                    && t.TransactionDate.Date == nextDueDate
+                    && t.IsGeneratedFromSubscription);
+
+            if (existingTransaction != null)
+            {
+                continue;
+            }
+
+            var transaction = new Transaction
+            {
+                Id = Guid.NewGuid(),
+                Type = subscription.Type,
+                Amount = subscription.Amount,
+                TransactionDate = subscription.NextDueDate,
+                Description = $"待记账 - {subscription.Name}",
+                AttachmentUrl = null,
+                CreatedAt = DateTime.UtcNow,
+                UserId = userId,
+                AccountId = subscription.AccountId,
+                CategoryId = subscription.CategoryId,
+                SubscriptionId = subscription.Id,
+                IsGeneratedFromSubscription = true
+            };
+
+            _context.Transactions.Add(transaction);
+            generatedTransactions.Add(transaction);
+        }
+
+        if (generatedTransactions.Any())
+        {
+            await _context.SaveChangesAsync();
+        }
+
+        return generatedTransactions
+            .Select(t => new TransactionDto(
+                t.Id,
+                t.Type,
+                t.Amount,
+                t.TransactionDate,
+                t.Description,
+                t.AttachmentUrl,
+                t.CreatedAt,
+                t.UpdatedAt,
+                t.AccountId,
+                t.Account?.Name,
+                t.CategoryId,
+                t.Category?.Name,
+                t.TransferToAccountId,
+                t.TransferToAccount?.Name,
+                t.SubscriptionId,
+                t.IsGeneratedFromSubscription
+            ))
+            .ToList();
     }
 
     private static DateTime CalculateNextDueDate(DateTime fromDate, SubscriptionFrequency frequency, DateTime? referenceDate = null)

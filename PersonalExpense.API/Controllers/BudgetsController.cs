@@ -4,7 +4,6 @@ using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
-using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
 
@@ -20,17 +19,12 @@ public class BudgetsController : ControllerBase
         _budgetService = budgetService;
     }
 
-    private Guid GetCurrentUserId()
-    {
-        return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
-    }
-
     [HttpGet]
     public async Task<ActionResult<List<BudgetDto>>> GetBudgets(
         [FromQuery] int? year, 
         [FromQuery] int? month)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var budgets = await _budgetService.GetBudgetsAsync(userId, year, month);
         return Ok(budgets);
     }
@@ -38,7 +32,7 @@ public class BudgetsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<BudgetDto>> GetBudget(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var budget = await _budgetService.GetBudgetByIdAsync(id, userId);
         
         if (budget == null)
@@ -54,7 +48,7 @@ public class BudgetsController : ControllerBase
         [FromQuery] int year, 
         [FromQuery] int month)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var status = await _budgetService.GetBudgetStatusAsync(userId, year, month);
         return Ok(status);
     }
@@ -62,7 +56,7 @@ public class BudgetsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<BudgetDto>> PostBudget(BudgetCreateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var budget = await _budgetService.CreateBudgetAsync(dto, userId);
         return CreatedAtAction(nameof(GetBudget), new { id = budget.Id }, budget);
     }
@@ -70,7 +64,7 @@ public class BudgetsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> PutBudget(Guid id, BudgetUpdateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _budgetService.UpdateBudgetAsync(id, dto, userId);
         return NoContent();
     }
@@ -78,7 +72,7 @@ public class BudgetsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteBudget(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _budgetService.DeleteBudgetAsync(id, userId);
         return NoContent();
     }
