@@ -314,6 +314,7 @@ public class TransactionService : ITransactionService
     {
         var result = new ImportResultDto();
         var errors = new List<ImportErrorDto>();
+        var skippedRecords = new List<SkippedRecordDto>();
         var validRecords = new List<TransactionImportDto>();
 
         var account = await _context.Accounts
@@ -338,8 +339,8 @@ public class TransactionService : ITransactionService
                 errors.Add(new ImportErrorDto
                 {
                     RowNumber = context.Context.Parser.Row,
-                    ErrorMessage = $"无法解析的数据: {context.RawRecord}",
-                    RawData = context.RawRecord
+                    ErrorMessage = $"无法解析的数据: {context.RawRecord?.Trim()}",
+                    RawData = context.RawRecord?.Trim()
                 });
             }
         };
@@ -366,11 +367,50 @@ public class TransactionService : ITransactionService
             return result;
         }
 
+        var requiredHeaders = new[] { "日期", "分类", "金额" };
+        var missingHeaders = new List<string>();
+        var headerRecord = csv.HeaderRecord;
+        
+        if (headerRecord == null || headerRecord.Length == 0)
+        {
+            errors.Add(new ImportErrorDto
+            {
+                RowNumber = 1,
+                ErrorMessage = "CSV表头为空或无法识别",
+                RawData = csv.Context.Parser.RawRecord
+            });
+            result.Errors = errors;
+            result.ErrorCount = errors.Count;
+            return result;
+        }
+
+        foreach (var required in requiredHeaders)
+        {
+            if (!headerRecord.Any(h => h.Equals(required, StringComparison.OrdinalIgnoreCase)))
+            {
+                missingHeaders.Add(required);
+            }
+        }
+
+        if (missingHeaders.Any())
+        {
+            errors.Add(new ImportErrorDto
+            {
+                RowNumber = 1,
+                ErrorMessage = $"缺少必需的表头列: {string.Join(", ", missingHeaders)}。必需列: {string.Join(", ", requiredHeaders)}",
+                RawData = string.Join(",", headerRecord)
+            });
+            result.Errors = errors;
+            result.ErrorCount = errors.Count;
+            return result;
+        }
+
         var dateFormats = new[] 
         { 
             "yyyy-MM-dd", 
             "yyyy/MM/dd", 
             "MM/dd/yyyy", 
+            "MM-dd-yyyy", 
             "dd-MM-yyyy", 
             "yyyy年MM月dd日",
             "yyyyMMdd"
@@ -407,7 +447,7 @@ public class TransactionService : ITransactionService
                     {
                         RowNumber = currentRow,
                         ErrorMessage = string.Join("; ", validationErrors),
-                        RawData = rawRecord
+                        RawData = rawRecord?.Trim()
                     });
                     continue;
                 }
@@ -422,7 +462,7 @@ public class TransactionService : ITransactionService
                         {
                             RowNumber = currentRow,
                             ErrorMessage = $"无效的日期格式: {record.Date}。支持的格式: {string.Join(", ", dateFormats)}",
-                            RawData = rawRecord
+                            RawData = rawRecord?.Trim()
                         });
                         continue;
                     }
@@ -436,7 +476,7 @@ public class TransactionService : ITransactionService
                     {
                         RowNumber = currentRow,
                         ErrorMessage = $"无效的金额: {record.Amount}。金额必须是大于0的数字",
-                        RawData = rawRecord
+                        RawData = rawRecord?.Trim()
                     });
                     continue;
                 }
@@ -456,7 +496,7 @@ public class TransactionService : ITransactionService
                 {
                     RowNumber = currentRow,
                     ErrorMessage = $"解析行数据时出错: {ex.Message}",
-                    RawData = rawRecord
+                    RawData = rawRecord?.Trim()
                 });
             }
         }
@@ -464,7 +504,7 @@ public class TransactionService : ITransactionService
         result.TotalRows = validRecords.Count + errors.Count;
         result.ErrorCount = errors.Count;
 
-        if (!validRecords.Any())
+        if (!validRecords.Any() && !errors.Any())
         {
             result.Errors = errors;
             return result;
@@ -475,43 +515,82 @@ public class TransactionService : ITransactionService
         {
             var addedCount = 0;
             var skippedCount = 0;
+            var newCategoriesToAdd = new List<Category>();
+
+            var existingTransactions = await _context.Transactions
+                .Where(t => t.UserId == userId && t.AccountId == accountId)
+                .Select(t => new 
+                { 
+                    t.TransactionDate, 
+                    t.Amount, 
+                    t.CategoryId, 
+                    t.Description 
+                })
+                .ToListAsync();
+
+            var fileRecordsGroup = validRecords
+                .GroupBy(r => new { r.TransactionDate, r.CategoryName, r.Amount, r.Description })
+                .ToDictionary(g => g.Key, g => g.ToList());
 
             foreach (var importRecord in validRecords)
             {
                 var categoryName = importRecord.CategoryName;
-                if (!userCategories.TryGetValue(categoryName, out var category))
+                Category? category = null;
+                
+                if (userCategories.TryGetValue(categoryName, out var existingCategory))
                 {
-                    var newCategory = new Category
+                    category = existingCategory;
+                }
+                else
+                {
+                    var newCat = newCategoriesToAdd.FirstOrDefault(c => 
+                        c.Name.Equals(categoryName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (newCat == null)
                     {
-                        Id = Guid.NewGuid(),
-                        Name = categoryName,
-                        Type = CategoryType.Expense,
-                        IsActive = true,
-                        CreatedAt = DateTime.UtcNow,
-                        UserId = userId
-                    };
-                    _context.Categories.Add(newCategory);
-                    await _context.SaveChangesAsync();
-                    category = newCategory;
-                    userCategories[categoryName] = category;
+                        newCat = new Category
+                        {
+                            Id = Guid.NewGuid(),
+                            Name = categoryName,
+                            Type = CategoryType.Expense,
+                            IsActive = true,
+                            CreatedAt = DateTime.UtcNow,
+                            UserId = userId
+                        };
+                        newCategoriesToAdd.Add(newCat);
+                        userCategories[categoryName] = newCat;
+                    }
+                    category = newCat;
                 }
 
-                var isDuplicate = await _context.Transactions
-                    .AnyAsync(t => 
-                        t.UserId == userId &&
-                        t.AccountId == accountId &&
-                        t.TransactionDate == importRecord.TransactionDate &&
-                        t.Amount == importRecord.Amount &&
-                        t.CategoryId == category.Id &&
-                        t.Description == importRecord.Description);
-
-                if (isDuplicate)
+                var groupKey = new { importRecord.TransactionDate, importRecord.CategoryName, importRecord.Amount, importRecord.Description };
+                var fileDuplicates = fileRecordsGroup[groupKey];
+                
+                if (fileDuplicates.IndexOf(importRecord) > 0)
                 {
                     skippedCount++;
-                    errors.Add(new ImportErrorDto
+                    skippedRecords.Add(new SkippedRecordDto
                     {
                         RowNumber = importRecord.RowNumber,
-                        ErrorMessage = "跳过: 重复记录",
+                        Reason = "文件内重复记录",
+                        RawData = $"日期: {importRecord.TransactionDate:yyyy-MM-dd}, 分类: {importRecord.CategoryName}, 金额: {importRecord.Amount}"
+                    });
+                    continue;
+                }
+
+                var isHistoryDuplicate = existingTransactions.Any(t =>
+                    t.TransactionDate == importRecord.TransactionDate &&
+                    t.Amount == importRecord.Amount &&
+                    t.CategoryId == category.Id &&
+                    t.Description == importRecord.Description);
+
+                if (isHistoryDuplicate)
+                {
+                    skippedCount++;
+                    skippedRecords.Add(new SkippedRecordDto
+                    {
+                        RowNumber = importRecord.RowNumber,
+                        Reason = "历史重复记录",
                         RawData = $"日期: {importRecord.TransactionDate:yyyy-MM-dd}, 分类: {importRecord.CategoryName}, 金额: {importRecord.Amount}"
                     });
                     continue;
@@ -535,6 +614,11 @@ public class TransactionService : ITransactionService
                 addedCount++;
             }
 
+            if (newCategoriesToAdd.Any())
+            {
+                _context.Categories.AddRange(newCategoriesToAdd);
+            }
+
             await _context.SaveChangesAsync();
             await dbTransaction.CommitAsync();
 
@@ -542,6 +626,7 @@ public class TransactionService : ITransactionService
             result.SkippedCount = skippedCount;
             result.ErrorCount = errors.Count;
             result.Errors = errors;
+            result.SkippedRecords = skippedRecords;
         }
         catch
         {
