@@ -682,4 +682,341 @@ public class SubscriptionServiceTests
     }
 
     #endregion
+
+    #region Update NextDueDate Preservation Tests
+
+    [Fact]
+    public async Task UpdateSubscription_WithoutFrequencyChange_ShouldPreserveNextDueDate()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var createDto = new SubscriptionCreateDto(
+            Name: "Netflix",
+            Amount: 99,
+            Type: TransactionType.Expense,
+            Frequency: SubscriptionFrequency.Monthly,
+            StartDate: DateTime.UtcNow.AddDays(-30),
+            EndDate: null,
+            Description: "Monthly subscription",
+            AccountId: account.Id,
+            CategoryId: null
+        );
+
+        var created = await _service.CreateSubscriptionAsync(createDto, _userId);
+        var originalNextDueDate = created.NextDueDate;
+
+        var updateDto = new SubscriptionUpdateDto(
+            Name: "Netflix Premium",
+            Amount: 149,
+            Type: TransactionType.Expense,
+            Frequency: SubscriptionFrequency.Monthly,
+            StartDate: DateTime.UtcNow.AddDays(-30),
+            EndDate: null,
+            Status: SubscriptionStatus.Active,
+            Description: "Premium subscription",
+            AccountId: account.Id,
+            CategoryId: null
+        );
+
+        // Act
+        var result = await _service.UpdateSubscriptionAsync(created.Id, updateDto, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Name.Should().Be("Netflix Premium");
+        result.Amount.Should().Be(149);
+        result.NextDueDate.Should().Be(originalNextDueDate);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_WithFrequencyChange_ShouldRecalculateNextDueDate()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var createDto = new SubscriptionCreateDto(
+            Name: "Netflix",
+            Amount: 99,
+            Type: TransactionType.Expense,
+            Frequency: SubscriptionFrequency.Monthly,
+            StartDate: DateTime.UtcNow.AddDays(-30),
+            EndDate: null,
+            Description: "Monthly subscription",
+            AccountId: account.Id,
+            CategoryId: null
+        );
+
+        var created = await _service.CreateSubscriptionAsync(createDto, _userId);
+        var originalNextDueDate = created.NextDueDate;
+
+        var updateDto = new SubscriptionUpdateDto(
+            Name: "Netflix",
+            Amount: 99,
+            Type: TransactionType.Expense,
+            Frequency: SubscriptionFrequency.Weekly,
+            StartDate: DateTime.UtcNow.AddDays(-30),
+            EndDate: null,
+            Status: SubscriptionStatus.Active,
+            Description: "Weekly subscription",
+            AccountId: account.Id,
+            CategoryId: null
+        );
+
+        // Act
+        var result = await _service.UpdateSubscriptionAsync(created.Id, updateDto, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Frequency.Should().Be(SubscriptionFrequency.Weekly);
+        result.NextDueDate.Should().NotBe(originalNextDueDate);
+    }
+
+    #endregion
+
+    #region Generate Upcoming Transactions Tests
+
+    [Fact]
+    public async Task GenerateUpcomingTransactions_WithActiveSubscriptions_ShouldCreatePendingTransactions()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Netflix",
+            Amount = 99,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-2),
+            NextDueDate = DateTime.UtcNow.AddDays(5),
+            Status = SubscriptionStatus.Active,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Subscriptions.Add(subscription);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _service.GenerateUpcomingTransactionsAsync(_userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Count.Should().Be(1);
+        result[0].SubscriptionId.Should().Be(subscription.Id);
+        result[0].IsGeneratedFromSubscription.Should().BeTrue();
+        result[0].Description.Should().Contain("待记账");
+
+        var transaction = await _context.Transactions.FirstOrDefaultAsync(t => t.SubscriptionId == subscription.Id);
+        transaction.Should().NotBeNull();
+        transaction!.IsGeneratedFromSubscription.Should().BeTrue();
+        transaction.Amount.Should().Be(99);
+    }
+
+    [Fact]
+    public async Task GenerateUpcomingTransactions_WithInactiveSubscriptions_ShouldNotCreateTransactions()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var pausedSubscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Netflix",
+            Amount = 99,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-2),
+            NextDueDate = DateTime.UtcNow.AddDays(5),
+            Status = SubscriptionStatus.Paused,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var cancelledSubscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Spotify",
+            Amount = 15,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-3),
+            NextDueDate = DateTime.UtcNow.AddDays(10),
+            Status = SubscriptionStatus.Cancelled,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Subscriptions.Add(pausedSubscription);
+        _context.Subscriptions.Add(cancelledSubscription);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _service.GenerateUpcomingTransactionsAsync(_userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Count.Should().Be(0);
+
+        var transactions = await _context.Transactions.Where(t => t.UserId == _userId).ToListAsync();
+        transactions.Result.Count.Should().Be(0);
+    }
+
+    #endregion
+
+    #region Idempotency Tests
+
+    [Fact]
+    public async Task GenerateUpcomingTransactions_CalledMultipleTimes_ShouldBeIdempotent()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Netflix",
+            Amount = 99,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-2),
+            NextDueDate = DateTime.UtcNow.AddDays(5),
+            Status = SubscriptionStatus.Active,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Subscriptions.Add(subscription);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result1 = await _service.GenerateUpcomingTransactionsAsync(_userId);
+        var result2 = await _service.GenerateUpcomingTransactionsAsync(_userId);
+        var result3 = await _service.GenerateUpcomingTransactionsAsync(_userId);
+
+        // Assert
+        result1.Should().NotBeNull();
+        result1.Count.Should().Be(1);
+
+        result2.Should().NotBeNull();
+        result2.Count.Should().Be(0);
+
+        result3.Should().NotBeNull();
+        result3.Count.Should().Be(0);
+
+        var transactions = await _context.Transactions
+            .Where(t => t.SubscriptionId == subscription.Id)
+            .ToListAsync();
+
+        transactions.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GenerateUpcomingTransactions_MultipleSubscriptions_ShouldGenerateEachOnce()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var subscription1 = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Netflix",
+            Amount = 99,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-2),
+            NextDueDate = DateTime.UtcNow.AddDays(5),
+            Status = SubscriptionStatus.Active,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var subscription2 = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Spotify",
+            Amount = 15,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-3),
+            NextDueDate = DateTime.UtcNow.AddDays(10),
+            Status = SubscriptionStatus.Active,
+            AccountId = account.Id,
+            UserId = _userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Subscriptions.Add(subscription1);
+        _context.Subscriptions.Add(subscription2);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result1 = await _service.GenerateUpcomingTransactionsAsync(_userId);
+        var result2 = await _service.GenerateUpcomingTransactionsAsync(_userId);
+
+        // Assert
+        result1.Should().NotBeNull();
+        result1.Count.Should().Be(2);
+
+        result2.Should().NotBeNull();
+        result2.Count.Should().Be(0);
+
+        var transactions = await _context.Transactions
+            .Where(t => t.UserId == _userId)
+            .OrderBy(t => t.Amount)
+            .ToListAsync();
+
+        transactions.Count.Should().Be(2);
+        transactions[0].Amount.Should().Be(15);
+        transactions[1].Amount.Should().Be(99);
+    }
+
+    #endregion
+
+    #region Different User Tests
+
+    [Fact]
+    public async Task GenerateUpcomingTransactions_DifferentUser_ShouldNotGenerateForOtherUser()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+        var otherUserId = Guid.NewGuid();
+
+        var subscription = new Subscription
+        {
+            Id = Guid.NewGuid(),
+            Name = "Netflix",
+            Amount = 99,
+            Type = TransactionType.Expense,
+            Frequency = SubscriptionFrequency.Monthly,
+            StartDate = DateTime.UtcNow.AddMonths(-2),
+            NextDueDate = DateTime.UtcNow.AddDays(5),
+            Status = SubscriptionStatus.Active,
+            AccountId = account.Id,
+            UserId = otherUserId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Subscriptions.Add(subscription);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _service.GenerateUpcomingTransactionsAsync(_userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Count.Should().Be(0);
+
+        var transactions = await _context.Transactions.ToListAsync();
+        transactions.Count.Should().Be(0);
+    }
+
+    #endregion
 }

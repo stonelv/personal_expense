@@ -4,7 +4,6 @@ using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
-using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
 
@@ -20,11 +19,6 @@ public class SubscriptionsController : ControllerBase
         _subscriptionService = subscriptionService;
     }
 
-    private Guid GetCurrentUserId()
-    {
-        return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
-    }
-
     [HttpGet]
     public async Task<ActionResult<PagedResult<SubscriptionDto>>> GetSubscriptions(
         [FromQuery] SubscriptionStatus? status,
@@ -35,7 +29,7 @@ public class SubscriptionsController : ControllerBase
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 20)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var filter = new SubscriptionFilterParams
         {
             Status = status,
@@ -55,7 +49,7 @@ public class SubscriptionsController : ControllerBase
     public async Task<ActionResult<List<SubscriptionReminderDto>>> GetReminders(
         [FromQuery] int daysInAdvance = 3)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var reminders = await _subscriptionService.GetUpcomingRemindersAsync(userId, daysInAdvance);
         return Ok(reminders);
     }
@@ -63,7 +57,7 @@ public class SubscriptionsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<SubscriptionDto>> GetSubscription(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id, userId);
 
         if (subscription == null)
@@ -77,7 +71,7 @@ public class SubscriptionsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<SubscriptionDto>> PostSubscription(SubscriptionCreateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var subscription = await _subscriptionService.CreateSubscriptionAsync(dto, userId);
         return CreatedAtAction(nameof(GetSubscription), new { id = subscription.Id }, subscription);
     }
@@ -85,7 +79,7 @@ public class SubscriptionsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> PutSubscription(Guid id, SubscriptionUpdateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _subscriptionService.UpdateSubscriptionAsync(id, dto, userId);
         return NoContent();
     }
@@ -93,7 +87,7 @@ public class SubscriptionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteSubscription(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _subscriptionService.DeleteSubscriptionAsync(id, userId);
         return NoContent();
     }
@@ -103,8 +97,16 @@ public class SubscriptionsController : ControllerBase
         Guid id,
         RecordSubscriptionPaymentDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var transaction = await _subscriptionService.RecordSubscriptionPaymentAsync(id, dto, userId);
         return Ok(transaction);
+    }
+
+    [HttpPost("generate-upcoming")]
+    public async Task<ActionResult<List<TransactionDto>>> GenerateUpcomingTransactions()
+    {
+        var userId = this.GetCurrentUserIdOrThrow();
+        var transactions = await _subscriptionService.GenerateUpcomingTransactionsAsync(userId);
+        return Ok(transactions);
     }
 }

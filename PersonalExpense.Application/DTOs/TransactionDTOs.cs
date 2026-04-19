@@ -38,7 +38,9 @@ public record TransactionDto(
     Guid? CategoryId,
     string? CategoryName,
     Guid? TransferToAccountId,
-    string? TransferToAccountName
+    string? TransferToAccountName,
+    Guid? SubscriptionId,
+    bool IsGeneratedFromSubscription
 );
 
 public class TransactionFilterParams : PaginationParams

@@ -4,7 +4,6 @@ using PersonalExpense.Application.DTOs;
 using PersonalExpense.Application.Exceptions;
 using PersonalExpense.Application.Interfaces;
 using PersonalExpense.Domain.Entities;
-using System.Security.Claims;
 
 namespace PersonalExpense.API.Controllers;
 
@@ -20,15 +19,10 @@ public class CategoriesController : ControllerBase
         _categoryService = categoryService;
     }
 
-    private Guid GetCurrentUserId()
-    {
-        return Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty);
-    }
-
     [HttpGet]
     public async Task<ActionResult<List<CategoryDto>>> GetCategories()
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var categories = await _categoryService.GetCategoriesAsync(userId);
         return Ok(categories);
     }
@@ -36,7 +30,7 @@ public class CategoriesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<CategoryDto>> GetCategory(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var category = await _categoryService.GetCategoryByIdAsync(id, userId);
         
         if (category == null)
@@ -50,7 +44,7 @@ public class CategoriesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<CategoryDto>> PostCategory(CategoryCreateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         var category = await _categoryService.CreateCategoryAsync(dto, userId);
         return CreatedAtAction(nameof(GetCategory), new { id = category.Id }, category);
     }
@@ -58,7 +52,7 @@ public class CategoriesController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> PutCategory(Guid id, CategoryUpdateDto dto)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _categoryService.UpdateCategoryAsync(id, dto, userId);
         return NoContent();
     }
@@ -66,7 +60,7 @@ public class CategoriesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteCategory(Guid id)
     {
-        var userId = GetCurrentUserId();
+        var userId = this.GetCurrentUserIdOrThrow();
         await _categoryService.DeleteCategoryAsync(id, userId);
         return NoContent();
     }
