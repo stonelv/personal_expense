@@ -128,11 +128,11 @@ public class AnalyticsService : IAnalyticsService
 
             var totalExpense = await query
                 .Where(t => t.Type == TransactionType.Expense)
-                .SumAsync(t => t.Amount);
+                .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
             var totalIncome = await query
                 .Where(t => t.Type == TransactionType.Income)
-                .SumAsync(t => t.Amount);
+                .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
             var categoryBreakdown = await GetCategoryBreakdownFromQueryAsync(
                 query.Where(t => t.Type == TransactionType.Expense)
@@ -193,11 +193,11 @@ public class AnalyticsService : IAnalyticsService
 
         var totalExpense = await query
             .Where(t => t.Type == TransactionType.Expense)
-            .SumAsync(t => t.Amount);
+            .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
         var totalIncome = await query
             .Where(t => t.Type == TransactionType.Income)
-            .SumAsync(t => t.Amount);
+            .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
         var totalCount = await query.CountAsync();
 
@@ -229,11 +229,11 @@ public class AnalyticsService : IAnalyticsService
     {
         var totalExpense = await query
             .Where(t => t.Type == TransactionType.Expense)
-            .SumAsync(t => t.Amount);
+            .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
         var totalIncome = await query
             .Where(t => t.Type == TransactionType.Income)
-            .SumAsync(t => t.Amount);
+            .SumAsync(t => (decimal?)t.Amount) ?? 0;
 
         var count = await query.CountAsync();
 
@@ -255,7 +255,7 @@ public class AnalyticsService : IAnalyticsService
             {
                 CategoryId = g.Key.CategoryId!.Value,
                 CategoryName = g.Key.Name,
-                Amount = g.Sum(t => t.Amount),
+                Amount = (decimal?)g.Sum(t => t.Amount) ?? 0,
                 Count = g.Count()
             })
             .ToListAsync();
