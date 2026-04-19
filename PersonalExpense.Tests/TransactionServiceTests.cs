@@ -41,6 +41,25 @@ public class TransactionServiceTests
 
         _context.Accounts.Add(account);
         await _context.SaveChangesAsync();
+
+        if (initialBalance != 0)
+        {
+            var initialBalanceTransaction = new Transaction
+            {
+                Id = Guid.NewGuid(),
+                Type = initialBalance > 0 ? TransactionType.Income : TransactionType.Expense,
+                Amount = Math.Abs(initialBalance),
+                TransactionDate = DateTime.UtcNow,
+                Description = "初始余额",
+                CreatedAt = DateTime.UtcNow,
+                UserId = _userId,
+                AccountId = account.Id
+            };
+
+            _context.Transactions.Add(initialBalanceTransaction);
+            await _context.SaveChangesAsync();
+        }
+
         return account;
     }
 
@@ -356,7 +375,8 @@ public class TransactionServiceTests
         exception.Message.Should().Contain("Transfer to account not found");
 
         var transactions = await _context.Transactions.ToListAsync();
-        transactions.Should().BeEmpty();
+        var nonInitialBalanceTransactions = transactions.Where(t => t.Description != "初始余额").ToList();
+        nonInitialBalanceTransactions.Should().BeEmpty();
 
         var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
         updatedFromAccount.Should().NotBeNull();
@@ -656,7 +676,8 @@ public class TransactionServiceTests
         updatedToAccount!.Balance.Should().Be(toInitial + transferAmount);
 
         var transactions = await _context.Transactions.ToListAsync();
-        transactions.Count.Should().Be(2);
+        var transferTransactions = transactions.Where(t => t.RelatedTransactionId.HasValue).ToList();
+        transferTransactions.Count.Should().Be(2);
     }
 
     [Fact]
@@ -751,7 +772,8 @@ public class TransactionServiceTests
         exception.Message.Should().Contain("From account not found");
 
         var transactions = await _context.Transactions.ToListAsync();
-        transactions.Should().BeEmpty();
+        var nonInitialBalanceTransactions = transactions.Where(t => t.Description != "初始余额").ToList();
+        nonInitialBalanceTransactions.Should().BeEmpty();
 
         var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
         updatedToAccount.Should().NotBeNull();
@@ -784,7 +806,8 @@ public class TransactionServiceTests
 
         // Assert
         var transactions = await _context.Transactions.ToListAsync();
-        transactions.Should().BeEmpty();
+        var transferTransactions = transactions.Where(t => t.RelatedTransactionId.HasValue).ToList();
+        transferTransactions.Should().BeEmpty();
 
         var updatedFromAccount = await _context.Accounts.FindAsync(fromAccount.Id);
         var updatedToAccount = await _context.Accounts.FindAsync(toAccount.Id);
@@ -1029,6 +1052,145 @@ public class TransactionServiceTests
         results.Should().NotBeNull();
         results.Should().HaveCount(2);
         results.All(r => r.IsBalanced).Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Reconciliation Core Logic Tests (对账核心逻辑测试)
+
+    [Fact]
+    public async Task ReconcileAccount_AfterTamperingBalance_ShouldDetectUnbalanced()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+        var originalBalance = account.Balance;
+
+        var incomeDto = new TransactionCreateDto(
+            Type: TransactionType.Income,
+            Amount: 500,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Salary",
+            AttachmentUrl: null,
+            AccountId: account.Id,
+            CategoryId: null,
+            TransferToAccountId: null
+        );
+        await _service.CreateTransactionAsync(incomeDto, _userId);
+
+        var accountAfterTransaction = await _context.Accounts.FindAsync(account.Id);
+        accountAfterTransaction.Should().NotBeNull();
+        var expectedBalanceAfterTransaction = accountAfterTransaction!.Balance;
+
+        // 手动篡改账户余额（模拟有人直接修改数据库）
+        accountAfterTransaction.Balance += 100;
+        await _context.SaveChangesAsync();
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var result = await reconciliationService.ReconcileAccountAsync(account.Id, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsBalanced.Should().BeFalse();
+        result.ExpectedBalance.Should().Be(expectedBalanceAfterTransaction);
+        result.ActualBalance.Should().Be(expectedBalanceAfterTransaction + 100);
+        result.Discrepancy.Should().Be(100);
+        result.Discrepancies.Should().NotBeEmpty();
+        result.Discrepancies.Any(d => d.Type == "BalanceMismatch").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReconcileAccount_AfterValidTransfer_ShouldStayBalancedWithZeroDiscrepancy()
+    {
+        // Arrange
+        var cashAccount = await CreateTestAccountAsync("Cash", 5000);
+        var bankAccount = await CreateTestAccountAsync("Bank Card", 10000);
+        var cashInitial = cashAccount.Balance;
+        var bankInitial = bankAccount.Balance;
+        var transferAmount = 1000;
+
+        var transferDto = new TransferCreateDto(
+            Amount: transferAmount,
+            TransactionDate: DateTime.UtcNow,
+            Description: "Monthly transfer",
+            AttachmentUrl: null,
+            FromAccountId: cashAccount.Id,
+            ToAccountId: bankAccount.Id
+        );
+
+        await _service.CreateTransferAsync(transferDto, _userId);
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var cashResult = await reconciliationService.ReconcileAccountAsync(cashAccount.Id, _userId);
+        var bankResult = await reconciliationService.ReconcileAccountAsync(bankAccount.Id, _userId);
+
+        // Assert - Cash Account
+        cashResult.Should().NotBeNull();
+        cashResult.IsBalanced.Should().BeTrue();
+        cashResult.ExpectedBalance.Should().Be(cashInitial - transferAmount);
+        cashResult.ActualBalance.Should().Be(cashInitial - transferAmount);
+        cashResult.Discrepancy.Should().Be(0);
+        cashResult.Discrepancies.Should().BeEmpty();
+
+        // Assert - Bank Account
+        bankResult.Should().NotBeNull();
+        bankResult.IsBalanced.Should().BeTrue();
+        bankResult.ExpectedBalance.Should().Be(bankInitial + transferAmount);
+        bankResult.ActualBalance.Should().Be(bankInitial + transferAmount);
+        bankResult.Discrepancy.Should().Be(0);
+        bankResult.Discrepancies.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReconcileAccount_WithTolerance_ShouldIgnoreSmallDifferences()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var accountInDb = await _context.Accounts.FindAsync(account.Id);
+        accountInDb.Should().NotBeNull();
+        
+        // 篡改余额 0.005，小于容差 0.01，应该被忽略
+        accountInDb!.Balance += 0.005m;
+        await _context.SaveChangesAsync();
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var result = await reconciliationService.ReconcileAccountAsync(account.Id, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsBalanced.Should().BeTrue();
+        result.Discrepancies.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReconcileAccount_WithSignificantDifference_ShouldDetectUnbalanced()
+    {
+        // Arrange
+        var account = await CreateTestAccountAsync("Cash", 1000);
+
+        var accountInDb = await _context.Accounts.FindAsync(account.Id);
+        accountInDb.Should().NotBeNull();
+        
+        // 篡改余额 0.02，大于容差 0.01，应该被检测到
+        accountInDb!.Balance += 0.02m;
+        await _context.SaveChangesAsync();
+
+        var reconciliationService = new ReconciliationService(_context);
+
+        // Act
+        var result = await reconciliationService.ReconcileAccountAsync(account.Id, _userId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsBalanced.Should().BeFalse();
+        result.Discrepancies.Should().NotBeEmpty();
+        result.Discrepancies.Any(d => d.Type == "BalanceMismatch").Should().BeTrue();
     }
 
     #endregion

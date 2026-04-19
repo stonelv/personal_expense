@@ -22,7 +22,7 @@ public class TransactionService : ITransactionService
             .Include(t => t.Account)
             .Include(t => t.Category)
             .Include(t => t.TransferToAccount)
-            .Where(t => t.UserId == userId);
+            .Where(t => t.UserId == userId && t.Description != "初始余额");
 
         if (filter.Year.HasValue)
         {
@@ -414,11 +414,15 @@ public class TransactionService : ITransactionService
             .ThenBy(t => t.CreatedAt)
             .ToListAsync();
 
-        var totalIncome = transactions
+        var filteredTransactions = transactions
+            .Where(t => t.Description != "初始余额")
+            .ToList();
+
+        var totalIncome = filteredTransactions
             .Where(t => t.Type == TransactionType.Income)
             .Sum(t => t.Amount);
         
-        var totalExpense = transactions
+        var totalExpense = filteredTransactions
             .Where(t => t.Type == TransactionType.Expense)
             .Sum(t => t.Amount);
 
@@ -429,7 +433,7 @@ public class TransactionService : ITransactionService
         var balanceHistory = new List<BalanceEntryDto>();
         var currentBalance = startingBalance;
 
-        foreach (var trans in transactions)
+        foreach (var trans in filteredTransactions)
         {
             if (trans.Type == TransactionType.Income)
             {
