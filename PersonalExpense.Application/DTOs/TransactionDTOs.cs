@@ -76,6 +76,13 @@ public record ImportErrorDto
     public string? RawData { get; set; }
 }
 
+public record SkippedRecordDto
+{
+    public int RowNumber { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string? RawData { get; set; }
+}
+
 public record ImportResultDto
 {
     public int TotalRows { get; set; }
@@ -83,6 +90,7 @@ public record ImportResultDto
     public int SkippedCount { get; set; }
     public int ErrorCount { get; set; }
     public List<ImportErrorDto> Errors { get; set; } = new();
+    public List<SkippedRecordDto> SkippedRecords { get; set; } = new();
     public bool IsSuccess => ErrorCount == 0;
 }
 
