@@ -25,4 +25,6 @@ public class Transaction
     public Category? Category { get; set; }
     public Guid? TransferToAccountId { get; set; }
     public Account? TransferToAccount { get; set; }
+    public Guid? SubscriptionId { get; set; }
+    public Subscription? Subscription { get; set; }
 }

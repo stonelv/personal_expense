@@ -16,6 +16,7 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     public DbSet<Category> Categories { get; set; }
     public DbSet<Transaction> Transactions { get; set; }
     public DbSet<Budget> Budgets { get; set; }
+    public DbSet<Subscription> Subscriptions { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -56,6 +57,10 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .WithMany()
                 .HasForeignKey(t => t.TransferToAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(t => t.Subscription)
+                .WithMany(s => s.Transactions)
+                .HasForeignKey(t => t.SubscriptionId)
+                .OnDelete(DeleteBehavior.SetNull);
             entity.Property(t => t.Amount).HasColumnType("decimal(18, 2)");
         });
 
@@ -70,6 +75,23 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .HasForeignKey(b => b.CategoryId)
                 .OnDelete(DeleteBehavior.SetNull);
             entity.Property(b => b.Amount).HasColumnType("decimal(18, 2)");
+        });
+
+        modelBuilder.Entity<Subscription>(entity =>
+        {
+            entity.HasOne(s => s.User)
+                .WithMany(u => u.Subscriptions)
+                .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(s => s.Account)
+                .WithMany()
+                .HasForeignKey(s => s.AccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(s => s.Category)
+                .WithMany()
+                .HasForeignKey(s => s.CategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.Property(s => s.Amount).HasColumnType("decimal(18, 2)");
         });
     }
 }

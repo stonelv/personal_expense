@@ -1,0 +1,108 @@
+@using PersonalExpense.Web.DTOs
+@using PersonalExpense.Web.Services
+@inject ISubscriptionService SubscriptionService
+
+<div class="card mb-4">
+    <div class="card-header bg-warning text-white">
+        <h5 class="mb-0">
+            <span class="bi bi-bell-fill"></span>
+            即将到期的订阅
+        </h5>
+    </div>
+    <div class="card-body">
+        @if (IsLoading)
+        {
+            <div class="text-center py-3">
+                <div class="spinner-border text-warning" role="status">
+                    <span class="visually-hidden">加载中...</span>
+                </div>
+            </div>
+        }
+        else if (Reminders == null || Reminders.Count == 0)
+        {
+            <p class="text-muted text-center mb-0">暂无即将到期的订阅</p>
+        }
+        else
+        {
+            <div class="list-group">
+                @foreach (var reminder in Reminders)
+                {
+                    <div class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">@reminder.SubscriptionName</h6>
+                                <p class="mb-1 text-muted">
+                                    金额: <span class="@(reminder.Type == TransactionType.Income ? "text-success" : "text-danger")">
+                                        @(reminder.Type == TransactionType.Income ? "+" : "-")¥@reminder.Amount.ToString("F2")
+                                    </span>
+                                </p>
+                                <small class="text-muted">账户: @reminder.AccountName</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge @GetDaysBadgeClass(reminder.DaysUntilDue)">
+                                    @GetDaysText(reminder.DaysUntilDue)
+                                </span>
+                                <p class="mt-2 mb-0 small text-muted">
+                                    到期日: @reminder.NextDueDate.ToString("yyyy-MM-dd")
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool IsLoading { get; set; }
+    private List<SubscriptionReminderDto>? Reminders { get; set; }
+
+    [Parameter]
+    public int DaysInAdvance { get; set; } = 3;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRemindersAsync();
+    }
+
+    private async Task LoadRemindersAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            Reminders = await SubscriptionService.GetUpcomingRemindersAsync(DaysInAdvance);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载提醒失败: {ex.Message}");
+            Reminders = new List<SubscriptionReminderDto>();
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private string GetDaysBadgeClass(int days)
+    {
+        return days switch
+        {
+            0 => "bg-danger",
+            1 => "bg-danger",
+            2 => "bg-warning",
+            3 => "bg-info",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetDaysText(int days)
+    {
+        return days switch
+        {
+            0 => "今天",
+            1 => "明天",
+            _ => $"{days}天后"
+        };
+    }
+}

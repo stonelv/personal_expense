@@ -1,0 +1,87 @@
+@page "/"
+
+<PageTitle>首页</PageTitle>
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-body text-center py-5">
+                    <span class="bi bi-wallet2 fs-1 text-primary"></span>
+                    <h1 class="mt-3">个人记账系统</h1>
+                    <p class="text-muted">管理您的收入、支出和订阅</p>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <span class="bi bi-journal-text text-info"></span> 记账流水
+                            </h5>
+                            <p class="card-text text-muted">记录您的收入、支出和转账交易</p>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <a class="btn btn-outline-primary" href="/transactions">
+                                查看交易记录
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <span class="bi bi-calendar-check text-success"></span> 订阅管理
+                            </h5>
+                            <p class="card-text text-muted">管理固定支出如会员、房租等周期性订阅</p>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <a class="btn btn-outline-primary" href="/subscriptions">
+                                管理订阅
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <span class="bi bi-credit-card text-warning"></span> 账户管理
+                            </h5>
+                            <p class="card-text text-muted">管理您的现金、银行卡等账户</p>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <a class="btn btn-outline-primary" href="/accounts">
+                                管理账户
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <span class="bi bi-piggy-bank text-danger"></span> 预算管理
+                            </h5>
+                            <p class="card-text text-muted">设置月度预算，控制支出</p>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <a class="btn btn-outline-primary" href="/budgets">
+                                查看预算
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <SubscriptionReminder />
+        </div>
+    </div>
+</div>
