@@ -9,4 +9,6 @@ public interface ITransactionService
     Task<TransactionDto> CreateTransactionAsync(TransactionCreateDto dto, Guid userId);
     Task<TransactionDto> UpdateTransactionAsync(Guid id, TransactionUpdateDto dto, Guid userId);
     Task DeleteTransactionAsync(Guid id, Guid userId);
+    Task<TransferResultDto> CreateTransferAsync(TransferCreateDto dto, Guid userId);
+    Task<AccountBalanceHistoryDto> GetAccountBalanceHistoryAsync(Guid accountId, Guid userId, DateTime? startDate, DateTime? endDate);
 }

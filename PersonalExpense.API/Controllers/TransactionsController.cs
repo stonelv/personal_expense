@@ -69,12 +69,31 @@ public class TransactionsController : ControllerBase
         return Ok(transaction);
     }
 
+    [HttpGet("account/{accountId}/history")]
+    public async Task<ActionResult<AccountBalanceHistoryDto>> GetAccountBalanceHistory(
+        [FromRoute] Guid accountId,
+        [FromQuery] DateTime? startDate,
+        [FromQuery] DateTime? endDate)
+    {
+        var userId = GetCurrentUserId();
+        var result = await _transactionService.GetAccountBalanceHistoryAsync(accountId, userId, startDate, endDate);
+        return Ok(result);
+    }
+
     [HttpPost]
     public async Task<ActionResult<TransactionDto>> PostTransaction(TransactionCreateDto dto)
     {
         var userId = GetCurrentUserId();
         var transaction = await _transactionService.CreateTransactionAsync(dto, userId);
         return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
+    }
+
+    [HttpPost("transfer")]
+    public async Task<ActionResult<TransferResultDto>> PostTransfer(TransferCreateDto dto)
+    {
+        var userId = GetCurrentUserId();
+        var result = await _transactionService.CreateTransferAsync(dto, userId);
+        return CreatedAtAction(nameof(GetTransaction), new { id = result.OutgoingTransaction.Id }, result);
     }
 
     [HttpPut("{id}")]

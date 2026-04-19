@@ -56,6 +56,10 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .WithMany()
                 .HasForeignKey(t => t.TransferToAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(t => t.RelatedTransaction)
+                .WithOne()
+                .HasForeignKey<Transaction>(t => t.RelatedTransactionId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.Property(t => t.Amount).HasColumnType("decimal(18, 2)");
         });
 
